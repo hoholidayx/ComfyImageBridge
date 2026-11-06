@@ -1,0 +1,12 @@
+{
+  "images": [
+    "robot.png"
+  ],
+  "prompt": "Change the blue robot to bright orange. Keep the robot shape and plain background unchanged.",
+  "reference_resolution": 320,
+  "seed": 20261105,
+  "output_size": {
+    "mode": "follow_image"
+  },
+  "preset": "fast"
+}

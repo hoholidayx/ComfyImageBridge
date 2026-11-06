@@ -1,0 +1,16 @@
+{
+  "images": [
+    "robot.png",
+    "palette.png"
+  ],
+  "prompt": "Recolor the blue robot in <image1> using the orange and yellow colors from <image2>. Keep the simple geometric robot shape and plain background.",
+  "reference_resolution": 320,
+  "seed": 20261105,
+  "output_size": {
+    "mode": "aspect_ratio",
+    "aspect_ratio": "4:3",
+    "megapixels": 0.2,
+    "multiple": 32
+  },
+  "preset": "fast"
+}

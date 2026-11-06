@@ -1,0 +1,28 @@
+# Merge these sections into the selected Hermes profile's config.yaml.
+# Configure BOTH plugins identically. The address below is documentation-only.
+# WoL is optional: omit BOTH mac_address and lan_cidr for SSH-only operation.
+plugins:
+  entries:
+    comfy-workflows:
+      settings:
+        ssh_host: "gpuuser@192.0.2.10"
+        identity_file: "~/.ssh/id_ed25519"
+        remote_root: "/home/gpuuser/workspace/comfy-workflow-api"
+        mac_address: "02:00:00:00:00:01"
+        lan_cidr: "192.0.2.0/24"
+    ubuntu-runtime:
+      settings:
+        ssh_host: "gpuuser@192.0.2.10"
+        identity_file: "~/.ssh/id_ed25519"
+        remote_root: "/home/gpuuser/workspace/comfy-workflow-api"
+        mac_address: "02:00:00:00:00:01"
+        lan_cidr: "192.0.2.0/24"
+
+# The optional eager/tool-history settings require the compatible Hermes APIs
+# described in ../README.md. They do not install or patch Hermes core.
+tools:
+  tool_search:
+    enabled: auto
+    eager: [comfy_image]
+agent:
+  tool_history_echo: false

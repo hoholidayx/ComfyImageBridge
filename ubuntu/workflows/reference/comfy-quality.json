@@ -1,0 +1,30 @@
+{
+  "checked_at": "2026-11-05T16:07:29.646640+00:00",
+  "basis": "Comfy-Org/workflow_templates (user-selected); not Qwen Diffusers defaults",
+  "workflows": {
+    "qwen-image-2.1-t2i": {
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates/image_qwen_image_2_1_t2i.json",
+      "sha256": "5f2b50eeaf27e56a45456681ad5319df1ae51243d9653ac3f92c7dc05d1e1503",
+      "sampling": {
+        "steps": 25,
+        "cfg": 1,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1
+      },
+      "use_lora": false
+    },
+    "qwen-image-2.1-edit": {
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates/image_qwen_image_2_1_image_edit.json",
+      "sha256": "c1e6551759de131f083a040da072ac6f032c3c8401ceca202412cd912897d0fc",
+      "sampling": {
+        "steps": 25,
+        "cfg": 1,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1
+      },
+      "use_lora": false
+    }
+  }
+}

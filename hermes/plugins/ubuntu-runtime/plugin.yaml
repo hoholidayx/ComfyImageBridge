@@ -1,0 +1,14 @@
+name: ubuntu-runtime
+version: 0.3.1
+description: 管理固定 Ubuntu 主机的在线状态、按需网络唤醒与 ComfyUI 服务；含私有出图烟测，不自动卸载模型
+author: hoholiday
+python_runtime: external
+provides_tools:
+  - ubuntu_status
+  - comfy_service
+config_schema:
+  ssh_host: {type: str, default: "", description: "Trusted user@IPv4 SSH destination; tools cannot override it"}
+  identity_file: {type: str, default: "~/.ssh/id_ed25519", description: "Existing private key path, passed only to ssh"}
+  remote_root: {type: str, default: "", description: "Required absolute Ubuntu SDK path; no remote ~ expansion"}
+  mac_address: {type: str, default: "", description: "Optional WoL MAC; configure together with lan_cidr"}
+  lan_cidr: {type: str, default: "", description: "Optional WoL subnet, paired with mac_address; sender must belong to it"}

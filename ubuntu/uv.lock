@@ -1,0 +1,8 @@
+version = 1
+revision = 5
+requires-python = "==3.12.*"
+
+[[package]]
+name = "comfy-workflow-api"
+version = "0.6.1"
+source = { editable = "." }

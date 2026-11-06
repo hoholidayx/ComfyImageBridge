@@ -1,0 +1,96 @@
+# Comfy Workflows 0.6.1 / contract 7
+
+安装、配置、环境和双端同步见[Hermes 包说明](../../README.md)。此目录只包含 Hermes 客户端；`remote_bridge.py` 是薄入口，服务端实现在独立 Ubuntu 包的 `comfy_workflow_api.workflow_bridge` 中。
+
+## 统一入口
+
+`comfy_image` 统一文生图与多图编辑。主模型负责交互、提示词、参考图顺序和档位；程序在后台完成 Ubuntu 唤醒、服务就绪、提交、查询、下载和校验。正常任务不需要模型轮询。
+
+```json
+{"prompt":"雨夜街角撑伞的白色几何机器人，全身构图","title":"雨夜机器人","preset":"fast","size":"864x1536"}
+```
+
+```json
+{"prompt":"以 <image1> 为编辑底图，保持其中机器人的形状、姿态与构图；仅采用 <image2> 的橙黄色配色，不引入其中的物体或背景。","title":"雨夜机器人配色精修","images":["img_000001","/absolute/reference.png"],"size":"auto"}
+```
+
+| 参数 | 默认与约束 |
+|---|---|
+| prompt | 必填，非空，最多8000字符，超限报错 |
+| preset | 默认fast：LoRA/6步/Pruna自定义sigmas；仅用户明确要求时选择quality：无LoRA/25步/Euler simple |
+| images | 可省略或传空数组，有序0–10张本机PNG或图片ID；有编辑底图时将其放在第1项 |
+| size | auto：编辑跟随第一张、文生图1024×1024；支持比例或WxH |
+| title | 可选，最多80字符，描述生成意图，非视觉核验结论 |
+| seed | 默认固定0，不是随机；无符号64位整数 |
+| count | 默认1，范围1–4，各张seed递增 |
+
+aiwave/grok-4.3 会拒绝 seed 含超大整数 `maximum` 的工具 schema，因此模型工具 schema 将无符号64位上限写入描述；运行时仍严格校验 `0 ≤ seed` 且 `seed + count - 1 < 2^64`。
+
+指定尺寸64–2048且为32的倍数；比例模式沿用1MP/32对齐，实际尺寸写回记录。精确9:16可用576x1024或864x1536。CFG固定1、负向为空，不接受任意steps/cfg/use_lora/negative_prompt。
+
+## 参考图与提示词
+
+遵循 [Qwen Image 2.1 官方提示词规则](https://raw.githubusercontent.com/QwenLM/Qwen-Image-2.1/main/prompt_rewrite/prompts/system_prompt_edit.txt)：
+
+- 0张：省略 `images` 或传 `[]`，使用纯文生图提示词，不写图片标签。
+- 1张：自然称“这张图”或“图中的机器人”，不需要图片标签。
+- 2–10张：按 `images` 数组从1开始使用 `<image1>`、`<image2>` 等标签，不加下划线；逐图说明取用哪些属性、保留哪些内容。不要把节点槽名 `image_1` 写成提示词标签 `<image_1>`。
+
+编辑已有画面时，将底图放在 `images[0]` 并在提示词中明确其底图角色，其余图分别说明参考用途。若是没有底图的新场景合成，则明确每张图提供的人物、物体、风格等参考及其保留属性，并显式指定 `size`，避免默认继承第一张图的画布尺寸。程序保留图片数组顺序和原始提示词，不自动改写提示词。
+
+## 执行与回传
+
+工具保存任务、输入副本和可信路由，快速返回任务ID。有限独立worker继续执行；Telegram投递泵直接更新进度、发送图片和异常处理按钮，不调用LLM或inject_message。
+
+第一版主动通知支持当前Telegram单聊；CLI任务可通过管理命令查询。按钮绑定原用户、聊天、线程和bot，24小时过期，重复点击不重复执行。任务不自动重生；已确认失败后用户点击或原生命令retry才创建新尝试。提交状态不确定只能查询，不自动重提。
+
+```text
+/comfy status <task_id>
+/comfy cancel <task_id>
+/comfy retry <task_id>
+/comfy resend <image_id>
+/comfy images 雨夜机器人
+/comfy run {"prompt":"几何机器人","title":"机器人","size":"512x512"}
+```
+
+网关重启只中断投递，worker继续运行，重连后扫描outbox。发送响应不确定时标记delivery_uncertain，不盲目重复发图；resend只补发已有图片，不重新生成。观察进程恢复不得重提生成。
+
+后台worker提供start/stop/restart/status脚本，记录日志、PID、启动标识和命令；信号前核验归属。stop仅停止观察，不等同取消Comfy任务。无新增launchd/systemd配置。
+
+```sh
+COMFY_WORKER_PYTHON=/Hermes运行时/python /插件目录/scripts/comfy-worker.sh status TASK_UUID DATA_DIR
+# 或
+/Hermes运行时/python /插件目录/worker.py --action status --task-id TASK_UUID --data-dir DATA_DIR
+```
+
+DATA_DIR为当前profile的plugin-data/comfy-workflows；运行中的worker信息包含实际Python路径和日志位置。restart只恢复观察，不重新生成。
+
+## 图片卡与上下文
+
+产物索引保存图片ID、标题、参考关系、实际尺寸、seed、档位和receipt。完成时直接发图片及标题；下一次正常聊天通过pre_llm_call补入尚未登记的图片卡，最多4张、1600字符。卡片的api_content稳定回放；tool_history_echo=false继续裁剪旧工具记录。
+
+```text
+img_000001｜雨夜机器人
+fast · 864×1536 · seed 0
+```
+
+标题由主模型原调用顺手给出；缺失时机械提取提示词，不额外调用模型。标题是生成意图，需要确认实际细节时可读图。去重需确认卡片已进入历史，不能hook返回就推进游标。新会话只补最近4张，旧产物按标题查询。
+
+图片沿用现有数量上限与专属目录清理；轻量索引保留，文件消失标expired且不可再作参考。完整提示词、执行图、哈希、采样和运行日志留在receipt，不反复返回模型。
+
+## 常驻与兼容
+
+Hermes通用配置，新会话生效：
+
+```yaml
+tools:
+  tool_search:
+    enabled: auto
+    eager: [comfy_image]
+agent:
+  tool_history_echo: false
+```
+
+只常驻统一入口。comfy_task按需查询、历史和取消；原comfy_generate、comfy_edit、comfy_tasks、comfy_workflows保留一个兼容版本。ubuntu-runtime仍负责进程归属、唤醒烟测和原脚本启动，新入口内部复用，无需模型先调用comfy_service。
+
+SDK/CLI旧参数及历史任务保持兼容。旧生成接口沿用原就绪流程，正常使用应迁移到comfy_image。版本/哈希不匹配拒绝新提交，历史查询仍可用。插件代码的版本/哈希通过Ubuntu的config/client-contract.json显式同步，服务端不再保存插件源码副本；重启网关后以新会话验证新工具目录。

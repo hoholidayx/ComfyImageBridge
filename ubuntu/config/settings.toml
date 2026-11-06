@@ -1,0 +1,23 @@
+base_url = "http://127.0.0.1:8188"
+data_dir = "data"
+request_timeout = 60
+poll_interval = 1
+wait_timeout = 1200
+
+[service]
+comfy_dir = "~/workspace/ComfyUI"
+run_script = "run_comfyui.sh"
+# Empty: COMFY_UV_BIN, then PATH, then ~/.local/bin/uv.
+uv_bin = ""
+
+[retention]
+max_tasks = 100
+auto_cleanup = true
+# Empty: derive from service.comfy_dir; cleanup is confined to these namespaces.
+comfy_output_dir = ""
+comfy_input_dir = ""
+
+[sleep_guard]
+enabled = true
+poll_seconds = 2
+idle_grace_seconds = 10

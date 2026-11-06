@@ -1,0 +1,27 @@
+# Runtime data, local configuration and Python environments
+**/.venv/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/dist/
+**/build/
+**/data/
+**/logs/
+**/plugin-backups/
+.env
+.env.*
+*.local.toml
+*.local.yaml
+*.local.json
+*.pem
+*.key
+.DS_Store
+
+# Model weights belong to the existing ComfyUI installation
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth

@@ -1,0 +1,10 @@
+{
+  "prompt": "A small blue geometric robot standing beside colorful blocks on a plain white background.",
+  "seed": 0,
+  "output_size": {
+    "mode": "explicit",
+    "width": 512,
+    "height": 512
+  },
+  "preset": "quality"
+}

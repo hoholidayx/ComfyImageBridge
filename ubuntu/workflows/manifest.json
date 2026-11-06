@@ -1,0 +1,20 @@
+{
+  "qwen-image-2.1-edit": {
+    "source": "qwen-image-2.1-unified.json",
+    "path": "workflows/snapshots/qwen-image-2.1-edit/fa791d2868de38aecb0b3fa5760a69d14e08b5b38382e83bc3c5feebb3e77ba7.json",
+    "sha256": "fa791d2868de38aecb0b3fa5760a69d14e08b5b38382e83bc3c5feebb3e77ba7",
+    "topology": "a60b534255a6d6efdac085a93548c40fa0ff6fe9c97d0494ad135e91cd627388",
+    "synced_at": "2026-11-04T17:18:18.147142+00:00",
+    "distribution_note": "Default example prompt and reference filenames sanitized; topology unchanged",
+    "upstream_sha256": "84410f6c729141372aa83df8a3a8561772fd22df475e9fcfb8526a7610af2fc6"
+  },
+  "qwen-image-2.1-t2i": {
+    "source": "qwen-image-2.1-unified.json",
+    "path": "workflows/snapshots/qwen-image-2.1-t2i/fa791d2868de38aecb0b3fa5760a69d14e08b5b38382e83bc3c5feebb3e77ba7.json",
+    "sha256": "fa791d2868de38aecb0b3fa5760a69d14e08b5b38382e83bc3c5feebb3e77ba7",
+    "topology": "a60b534255a6d6efdac085a93548c40fa0ff6fe9c97d0494ad135e91cd627388",
+    "synced_at": "2026-11-04T17:18:18.149591+00:00",
+    "distribution_note": "Default example prompt and reference filenames sanitized; topology unchanged",
+    "upstream_sha256": "84410f6c729141372aa83df8a3a8561772fd22df475e9fcfb8526a7610af2fc6"
+  }
+}

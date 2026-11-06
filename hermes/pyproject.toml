@@ -1,0 +1,9 @@
+[project]
+name = "myhermes2comfy-plugins"
+version = "0.6.1"
+description = "Hermes plugins for the independently installed Comfy workflow backend"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false

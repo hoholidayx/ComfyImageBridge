@@ -1,0 +1,20 @@
+name: comfy-workflows
+version: 0.6.1
+description: 统一后台生图、多图编辑、分辨率选择与直接消息回调；保留轻量图片标题索引
+author: hoholiday
+python_runtime: external
+provides_tools:
+  - comfy_image
+  - comfy_workflows
+  - comfy_generate
+  - comfy_edit
+  - comfy_task
+  - comfy_tasks
+provides_hooks:
+  - pre_llm_call
+config_schema:
+  ssh_host: {type: str, default: "", description: "Required trusted user@IPv4 SSH destination"}
+  identity_file: {type: str, default: "~/.ssh/id_ed25519", description: "SSH key path; key content is never read by the plugin"}
+  remote_root: {type: str, default: "", description: "Required absolute Ubuntu SDK path; no remote ~ expansion"}
+  mac_address: {type: str, default: "", description: "Optional WoL MAC; configure together with lan_cidr"}
+  lan_cidr: {type: str, default: "", description: "Optional direct WoL subnet; configure with mac_address"}
