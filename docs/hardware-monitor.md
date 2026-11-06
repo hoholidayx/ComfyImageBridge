@@ -35,7 +35,18 @@ sudo bash scripts/hardware-monitor.sh uninstall
 
 ## 邮件配置
 
-首次在 Ubuntu 创建私密配置；已有文件应直接编辑，避免覆盖凭据：
+推荐在 Ubuntu 的交互式终端中配置，无需 sudo。授权密码通过 TTY 隐藏输入，不放在命令参数或聊天中；非交互式输入和无法隐藏回显的终端会被拒绝：
+
+```bash
+bash scripts/hardware-monitor.sh configure-email \
+  --host smtp.example.test --port 465 --security ssl \
+  --username sender@example.test --from-address sender@example.test \
+  --to owner@example.test --cc copy@example.test --test-email
+```
+
+`--to` 和 `--cc` 可以重复使用。已有配置默认不会覆盖；更新时显式加 `--replace`。`--test-email` 在保存配置后将测试通知排入持久队列，由运行中的监控发送，可用 `status` 检查实际投递结果。
+
+也可手动创建私密配置；以下命令只适用于首次创建，已有文件应直接编辑，避免覆盖凭据：
 
 ```bash
 mkdir -p ~/.config/myhermes2comfy
@@ -43,6 +54,13 @@ install -m 600 config/smtp.example.toml ~/.config/myhermes2comfy/smtp.toml
 ```
 
 填写 SMTP 主机、端口、用户名、邮箱应用密码、发件人和收件人。默认 587 + STARTTLS，也支持 `security = "ssl"` 配合 465。系统验证 TLS 证书。配置路径通过 `[monitor.smtp].secret_file` 指定；凭据文件须是当前用户所有、权限 0600 的普通文件。私密配置不得加入仓库。
+
+`to_addresses` 填写收件人数组；可选的 `cc_addresses` 填写抄送人数组，省略或设为 `[]` 时不抄送。抄送项须是单独的完整邮箱地址，不接受显示名称、逗号分隔的地址字符串、空值或控制字符。抄送地址同时写入邮件的 `Cc` 头和 SMTP 实际收件人列表；与主收件人重复的地址只投递一次。例如：
+
+```toml
+to_addresses = ["owner@example.com"]
+cc_addresses = ["copy@example.com"]
+```
 
 ```bash
 bash scripts/hardware-monitor.sh test-email

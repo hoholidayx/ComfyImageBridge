@@ -7,6 +7,8 @@ cursors, incident changes and outgoing notifications together.
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.errors import HeaderParseError
+from email.headerregistry import Address
 from email.message import EmailMessage
 import fcntl
 import json
@@ -75,6 +77,23 @@ def _clean(value, secrets=()):
     return _clean(str(value), secrets)
 
 
+def _valid_cc_address(value):
+    """Accept one bare mailbox, never a display name or an address-list header."""
+    if (not isinstance(value, str) or not value or len(value) > 254
+            or not value.isascii() or any(character.isspace() or ord(character) < 32
+                                           or ord(character) == 127 for character in value)):
+        return False
+    try:
+        address = Address(addr_spec=value)
+    except (ValueError, TypeError, HeaderParseError):
+        return False
+    if (not address.username or len(address.username) > 64 or not address.domain
+            or len(address.domain) > 253 or address.addr_spec != value):
+        return False
+    return all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+               for label in address.domain.split('.'))
+
+
 def smtp_configuration(root, config=None):
     """Return private settings to the sender only; errors never contain values."""
     config = config or configuration(root)[0]
@@ -100,6 +119,7 @@ def smtp_configuration(root, config=None):
             'security': value.get('security', 'starttls'),
             'username': value.get('username', ''), 'password': value.get('password', ''),
             'from_address': value.get('from_address'), 'to_addresses': value.get('to_addresses'),
+            'cc_addresses': value.get('cc_addresses', []),
         }
         if result['security'] not in ('starttls', 'ssl'):
             return None, 'SMTP security must be starttls or ssl'
@@ -112,6 +132,9 @@ def smtp_configuration(root, config=None):
             raise ValueError()
         if any(not isinstance(item, str) or not item or any(c in item for c in '\r\n')
                for item in result['to_addresses']):
+            raise ValueError()
+        if not isinstance(result['cc_addresses'], list) or any(
+                not _valid_cc_address(item) for item in result['cc_addresses']):
             raise ValueError()
         if not all(isinstance(result[key], str) for key in ('username', 'password')):
             raise ValueError()
@@ -447,6 +470,8 @@ def _deliver(root, event_id):
         message = EmailMessage()
         message['From'] = settings['from_address']
         message['To'] = ', '.join(settings['to_addresses'])
+        if settings['cc_addresses']:
+            message['Cc'] = ', '.join(settings['cc_addresses'])
         message['Subject'] = f"[ComfyUI {payload['kind']}] {payload['host']}"
         message['Message-ID'] = f'<{event_id}@myhermes2comfy.local>'
         message['Date'] = datetime.fromtimestamp(row['created'], timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
@@ -464,7 +489,8 @@ def _deliver(root, event_id):
                     smtp.ehlo()
                 if settings['username']:
                     smtp.login(settings['username'], settings['password'])
-                refused = smtp.send_message(message)
+                recipients = list(dict.fromkeys(settings['to_addresses'] + settings['cc_addresses']))
+                refused = smtp.send_message(message, from_addr=settings['from_address'], to_addrs=recipients)
                 if refused:
                     raise smtplib.SMTPRecipientsRefused(refused)
             store.outcome(event_id, True)

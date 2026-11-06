@@ -47,7 +47,7 @@ class HardwareMonitorTests(unittest.TestCase):
         return [dict(row) | {'payload': json.loads(row['payload'])}
                 for row in store.connection.execute('SELECT * FROM outbox ORDER BY created,id')]
 
-    def smtp(self, password='a-private-password'):
+    def smtp(self, password='a-private-password', cc_addresses=None):
         self.configure(smtp=True)
         (self.root/'smtp.toml').write_text('''[smtp]
 host = "smtp.example.test"
@@ -58,6 +58,9 @@ password = "'''+password+'''"
 from_address = "sender@example.test"
 to_addresses = ["recipient@example.test"]
 ''')
+        if cc_addresses is not None:
+            with (self.root/'smtp.toml').open('a') as stream:
+                stream.write('cc_addresses = '+json.dumps(cc_addresses)+'\n')
         (self.root/'smtp.toml').chmod(0o600)
 
     def test_normal_na_and_high_utilization_do_not_alert(self):
@@ -306,8 +309,81 @@ to_addresses = ["recipient@example.test"]
         self.assertTrue(factory.call_args.kwargs['timeout'] == 5)
         message = smtp.send_message.call_args.args[0]
         self.assertEqual(message['Message-ID'], f'<{event_id}@myhermes2comfy.local>')
+        self.assertIsNone(message['Cc'])
+        self.assertEqual(smtp.send_message.call_args.kwargs,
+                         {'from_addr': 'sender@example.test', 'to_addrs': ['recipient@example.test']})
         store = self.store()
         self.assertIsNotNone(self.rows(store)[0]['sent_at'])
+
+    def test_cc_addresses_are_visible_and_actually_in_the_smtp_envelope(self):
+        addresses = ['copy@example.test', 'another.copy@example.test']
+        self.smtp(cc_addresses=addresses)
+        settings, error = monitor.smtp_configuration(self.root)
+        self.assertIsNone(error)
+        self.assertEqual(settings['cc_addresses'], addresses)
+        event_id = monitor.queue_event(self.root, 'test', {'message': 'synthetic CC test'})
+        with patch.object(monitor.smtplib, 'SMTP') as factory:
+            smtp = factory.return_value.__enter__.return_value
+            smtp.send_message.return_value = {}
+            self.assertEqual(monitor._deliver(self.root, event_id), 0)
+        message = smtp.send_message.call_args.args[0]
+        self.assertEqual(message['To'], 'recipient@example.test')
+        self.assertEqual(str(message['Cc']), ', '.join(addresses))
+        self.assertEqual(smtp.send_message.call_args.kwargs['to_addrs'],
+                         ['recipient@example.test', *addresses])
+
+    def test_omitted_or_empty_cc_preserves_existing_configuration(self):
+        for addresses in (None, []):
+            with self.subTest(cc=addresses):
+                self.smtp(cc_addresses=addresses)
+                settings, error = monitor.smtp_configuration(self.root)
+                self.assertIsNone(error)
+                self.assertEqual(settings['cc_addresses'], [])
+                event_id = monitor.queue_event(self.root, 'test', {'message': 'synthetic no-CC test'})
+                with patch.object(monitor.smtplib, 'SMTP') as factory:
+                    smtp = factory.return_value.__enter__.return_value
+                    smtp.send_message.return_value = {}
+                    self.assertEqual(monitor._deliver(self.root, event_id), 0)
+                self.assertIsNone(smtp.send_message.call_args.args[0]['Cc'])
+                self.assertEqual(smtp.send_message.call_args.kwargs['to_addrs'], ['recipient@example.test'])
+
+    def test_duplicate_cc_keeps_header_but_does_not_duplicate_delivery(self):
+        self.smtp(cc_addresses=['recipient@example.test', 'copy@example.test', 'copy@example.test'])
+        event_id = monitor.queue_event(self.root, 'test', {'message': 'synthetic CC deduplication test'})
+        with patch.object(monitor.smtplib, 'SMTP') as factory:
+            smtp = factory.return_value.__enter__.return_value
+            smtp.send_message.return_value = {}
+            self.assertEqual(monitor._deliver(self.root, event_id), 0)
+        self.assertIn('copy@example.test', str(smtp.send_message.call_args.args[0]['Cc']))
+        self.assertEqual(smtp.send_message.call_args.kwargs['to_addrs'],
+                         ['recipient@example.test', 'copy@example.test'])
+
+    def test_invalid_cc_is_rejected_without_exposing_configured_values(self):
+        invalid = ('copy@example.test', False, [3], [''], ['not-an-address'],
+                   ['copy@example.test,other@example.test'], ['Name <copy@example.test>'],
+                   ['copy@example.test\r\nBcc: injected@example.test'],
+                   ['copy@bad_domain.test'], ['copy@example..test'], [' copy@example.test'],
+                   ['@example.test'], ['copy@'], ['copy@@example.test'],
+                   [('x'*65)+'@example.test'])
+        for addresses in invalid:
+            with self.subTest(cc=addresses):
+                self.smtp(cc_addresses=addresses)
+                settings, error = monitor.smtp_configuration(self.root)
+                self.assertIsNone(settings)
+                self.assertEqual(error, 'SMTP secret file is missing, unreadable or invalid')
+
+    def test_rejected_cc_is_not_recorded_as_successful_delivery(self):
+        self.smtp(cc_addresses=['copy@example.test'])
+        event_id = monitor.queue_event(self.root, 'test', {'message': 'synthetic refused CC test'})
+        with patch.object(monitor.smtplib, 'SMTP') as factory:
+            smtp = factory.return_value.__enter__.return_value
+            smtp.send_message.return_value = {'copy@example.test': (550, b'rejected')}
+            self.assertEqual(monitor._deliver(self.root, event_id), 1)
+        store = self.store()
+        row = self.rows(store)[0]
+        self.assertIsNone(row['sent_at'])
+        self.assertEqual(row['attempts'], 1)
+        self.assertEqual(row['last_error'], 'SMTPRecipientsRefused')
 
     def test_status_is_read_only_and_shows_unconfigured_email(self):
         data = self.root/'data'

@@ -7,3 +7,4 @@ username = "monitor@example.com"
 password = "REPLACE_WITH_MAIL_APP_PASSWORD"
 from_address = "monitor@example.com"
 to_addresses = ["owner@example.com"]
+cc_addresses = [] # Optional: ["copy@example.com"]. Each item is one bare email address.

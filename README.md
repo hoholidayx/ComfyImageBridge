@@ -95,4 +95,4 @@ uv run --project ubuntu python scripts/check.py
 - [开发与升级](docs/development.md)
 - [来源与许可说明](NOTICE.md)
 
-当前包版本：Ubuntu SDK / Hermes 包 **0.7.0**、生图插件 **0.6.1**、管理插件 **0.3.1**、契约 **7**。硬件监控与睡眠协调在 Ubuntu 端实现，现有 Hermes 工具参数保持兼容。
+当前包版本：Ubuntu SDK / Hermes 包 **0.7.1**、生图插件 **0.6.1**、管理插件 **0.3.1**、契约 **7**。硬件监控与睡眠协调在 Ubuntu 端实现，现有 Hermes 工具参数保持兼容。

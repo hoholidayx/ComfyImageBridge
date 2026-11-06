@@ -4,6 +4,9 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 action="${1:-status}"
 if (( $# )); then shift; fi
 case "$action" in
+  configure-email)
+    exec .venv/bin/python -m comfy_workflow_api.smtp_setup --root "$PWD" "$@"
+    ;;
   check|test-email)
     exec .venv/bin/python -m comfy_workflow_api.hardware_monitor --root "$PWD" "$action" "$@"
     ;;
@@ -14,7 +17,7 @@ case "$action" in
     exec /usr/bin/python3 scripts/hardware-service.py --root "$PWD" "$@" "$action"
     ;;
   *)
-    printf 'Usage: %s {install|uninstall|start|stop|restart|status|check|test-email|retry|abort}\n' "$0" >&2
+    printf 'Usage: %s {install|uninstall|start|stop|restart|status|check|configure-email|test-email|retry|abort}\n' "$0" >&2
     exit 2
     ;;
 esac
