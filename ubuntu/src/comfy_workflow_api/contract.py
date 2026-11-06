@@ -6,7 +6,7 @@ PRESETS = {
     'qwen-image-2.1-edit': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 25}},
 }
 CONTRACT_VERSION = 7
-VERSION = '0.7.1'
+VERSION = '0.7.2'
 MAX_PROMPT_LENGTH = 8000
 
 

@@ -17,10 +17,11 @@ import struct
 import time
 import uuid
 
+from .scope import BASE_FIELDS, LOCAL_PLATFORMS, SESSION_FIELDS, require_scope, scope_matches
+
 
 TERMINAL = frozenset({'completed', 'partial', 'failed', 'cancelled', 'interrupted_by_restart'})
 RATIOS = ('1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9')
-SCOPE_FIELDS = ('profile', 'bot', 'platform', 'chat_id', 'thread_id', 'user_id')
 CONFIG_DEFAULTS = {
     'ssh_host': '',
     'identity_file': '~/.ssh/id_ed25519',
@@ -46,19 +47,6 @@ def atomic_json(path, value):
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def scope_matches(record, caller):
-    """Partial matching is useful to a profile's adapter pump; callers supply full scope."""
-    if caller is None:
-        return True
-    return all(str(record.get(key) or '') == str(value or '')
-               for key, value in caller.items() if key in SCOPE_FIELDS)
-
-
-def require_scope(record, caller):
-    if caller is not None and any(str(record.get(key) or '') != str(caller.get(key) or '') for key in SCOPE_FIELDS):
-        raise PermissionError('Task or image belongs to another conversation/user')
 
 
 def trusted_origin(origin):
@@ -276,9 +264,35 @@ class Store:
         atomic_json(self.directory(task_id)/'receipt.json', job)
         return job
 
-    def pending_outbox(self, limit=50):
+    def pending_outbox(self, limit=50, origin=None):
+        # Select this consumer's events before LIMIT; another route's backlog must
+        # not hide them. Fixed scope keys keep JSON paths out of caller control.
+        clauses, parameters = ["state='pending'"], []
+        if origin is not None:
+            caller_local = str(getattr(origin.get('platform'), 'value', origin.get('platform')) or '') in LOCAL_PLATFORMS
+            for key in BASE_FIELDS + SESSION_FIELDS:
+                if key not in origin and not (key == 'conversation_id' and 'session_id' in origin):
+                    continue
+                if key == 'conversation_id':
+                    stored = ("COALESCE(NULLIF(json_extract(body, '$.origin.conversation_id'), ''), "
+                              "json_extract(body, '$.origin.session_id'))")
+                    value = origin.get('conversation_id') or origin.get('session_id')
+                else:
+                    stored = f"json_extract(body, '$.origin.{key}')"
+                    value = origin[key]
+                comparison = f"COALESCE(CAST({stored} AS TEXT), '') = ?"
+                if key in SESSION_FIELDS and not caller_local:
+                    # Session fields apply when the stored record is local too,
+                    # even if a partial caller filter omitted its platform.
+                    local_marks = ','.join('?' for _ in LOCAL_PLATFORMS)
+                    platform = "COALESCE(json_extract(body, '$.origin.platform'), '')"
+                    comparison = f'({platform} NOT IN ({local_marks}) OR {comparison})'
+                    parameters.extend(LOCAL_PLATFORMS)
+                clauses.append(comparison)
+                parameters.append(str(getattr(value, 'value', value) or ''))
         with self.connection() as db:
-            rows = db.execute("SELECT body FROM outbox WHERE state='pending' ORDER BY created_at LIMIT ?", (limit,)).fetchall()
+            rows = db.execute('SELECT body FROM outbox WHERE ' + ' AND '.join(clauses)
+                              + ' ORDER BY created_at LIMIT ?', (*parameters, limit)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def mark_outbox(self, event_id, state, **fields):
@@ -305,13 +319,20 @@ class Store:
     def ack_outbox(self, event_id, message_id=None):
         return self.mark_outbox(event_id, 'delivered', message_id=message_id, delivered_at=now())
 
-    def recover_outbox(self, origin=None):
+    def recover_outbox(self, origin=None, replay_safe=False):
+        if replay_safe and (not isinstance(origin, dict) or not origin.get('profile')
+                            or origin.get('platform') not in LOCAL_PLATFORMS or origin.get('bot') != 'local'):
+            raise ValueError('Replay-safe recovery requires a trusted local profile/platform/bot binding')
         with self.connection() as db:
             rows = db.execute("SELECT event_id,body FROM outbox WHERE state='sending'").fetchall()
         count = 0
         for event_id, body in rows:
-            if scope_matches(json.loads(body).get('origin', {}), origin):
-                self.mark_outbox(event_id, 'delivery_uncertain', error='Gateway stopped during send; explicit resend is required')
+            event_origin = json.loads(body).get('origin', {})
+            if scope_matches(event_origin, origin):
+                if replay_safe and isinstance(event_origin.get('delivery_target'), dict):
+                    self.mark_outbox(event_id, 'pending')
+                else:
+                    self.mark_outbox(event_id, 'delivery_uncertain', error='Gateway stopped during send; explicit resend is required')
                 count += 1
         return count
 
@@ -351,6 +372,8 @@ class JobService:
     def create(self, args, origin, *, retry_of=None, reference_ids=None):
         request = normalize(args)
         trusted_origin(origin)
+        from .local_delivery import prepare_origin
+        origin = prepare_origin(self.ctx, origin)
         task_id = str(uuid.uuid4())
         directory = self.store.directory(task_id)
         directory.mkdir(parents=True, exist_ok=False)
@@ -422,6 +445,7 @@ class JobService:
                 'count': job['request']['count'], 'artifacts': artifacts, 'worker_running': matches(job.get('worker')),
                 'elapsed_seconds': round(max(0, elapsed_until-datetime.fromisoformat(job['created_at']).timestamp()), 3),
                 'remote_task_id': job.get('remote_task_id'), 'error': job.get('error'),
+                'delivery_state': job.get('delivery_state'), 'delivery_error': job.get('delivery_error'),
                 'cancel_requested': job.get('cancel_requested', False), 'receipt_path': str(self.store.directory(task_id)/'receipt.json')}
         result.update({key: value for key, value in job.get('last_remote_status', {}).items()
                        if key in ('queued_seconds', 'running_seconds', 'last_progress_at', 'stalled', 'stall_reason',

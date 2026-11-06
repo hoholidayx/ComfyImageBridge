@@ -1,6 +1,6 @@
 # Hermes 插件包
 
-本目录包含 `comfy-workflows 0.6.1` 和 `ubuntu-runtime 0.3.1` 两个相邻安装的 Hermes 插件。生图、编辑、任务和图片索引在 Hermes 侧；工作流编译、ComfyUI API、服务管理和防睡眠锁在独立的 [Ubuntu 包](../ubuntu/README.md)。跨机调用只通过已有 SSH 私钥，不需要新的 HTTP 服务。
+本目录包含 `comfy-workflows 0.6.2` 和 `ubuntu-runtime 0.3.1` 两个相邻安装的 Hermes 插件。生图、编辑、任务和图片索引在 Hermes 侧；工作流编译、ComfyUI API、服务管理和防睡眠锁在独立的 [Ubuntu 包](../ubuntu/README.md)。跨机调用只通过已有 SSH 私钥，不需要新的 HTTP 服务。
 
 ## 环境与兼容
 
@@ -89,7 +89,7 @@ CFG 固定 1、负向提示词为空，不暴露任意 steps、CFG 或 LoRA 参�
 
 ## 直接命令与生命周期
 
-Telegram 中以下命令和按钮直接由程序处理，不调用 LLM：
+Telegram 命令、按钮与已连接桌面会话中的以下命令直接由程序处理，不调用 LLM：
 
 ```text
 /comfy run {"prompt":"几何机器人","title":"机器人","size":"512x512"}

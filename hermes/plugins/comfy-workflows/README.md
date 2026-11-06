@@ -40,9 +40,13 @@ aiwave/grok-4.3 会拒绝 seed 含超大整数 `maximum` 的工具 schema，因�
 
 ## 执行与回传
 
-工具保存任务、输入副本和可信路由，快速返回任务ID。有限独立worker继续执行；Telegram投递泵直接更新进度、发送图片和异常处理按钮，不调用LLM或inject_message。
+工具保存任务、输入副本和可信路由，快速返回任务ID。有限独立worker继续执行；Telegram 投递泵直接更新进度、发送图片和异常处理按钮。桌面投递泵使用 Hermes 核心的持久完成通知接口，把图片和说明写入原会话，实时显示并可从历史重放。两条路径均不调用 LLM 或 inject_message。
 
-第一版主动通知支持当前Telegram单聊；CLI任务可通过管理命令查询。按钮绑定原用户、聊天、线程和bot，24小时过期，重复点击不重复执行。任务不自动重生；已确认失败后用户点击或原生命令retry才创建新尝试。提交状态不确定只能查询，不自动重提。
+桌面任务创建时由核心签发固定投递目标，绑定 profile 和原逻辑会话。切换窗口、历史压缩或网关重启均不改投；原会话已删除时，取消该任务后续投递并记录 `delivery_state=cancelled`，生成任务本身不会因此被重复提交或自动中止。核心先验证并保留图片副本，原下载文件后续消失不影响已接受内容的重放。
+
+本地任务查询、图片 ID、重发和标题卡均按逻辑会话隔离；压缩只改变历史存储 tip，不改变归属。Telegram 保持原用户、聊天、线程和 bot 的范围，按钮 24 小时过期且一次消费。未升级核心时，桌面新后台任务会在启动 worker 前明确报错；无网关的独立 CLI 仍可使用旧提交/取图接口和诊断命令。
+
+任务不自动重生；已确认失败后显式 retry 才创建新尝试。提交状态不确定只能查询，不自动重提。
 
 ```text
 /comfy status <task_id>
@@ -53,7 +57,7 @@ aiwave/grok-4.3 会拒绝 seed 含超大整数 `maximum` 的工具 schema，因�
 /comfy run {"prompt":"几何机器人","title":"机器人","size":"512x512"}
 ```
 
-网关重启只中断投递，worker继续运行，重连后扫描outbox。发送响应不确定时标记delivery_uncertain，不盲目重复发图；resend只补发已有图片，不重新生成。观察进程恢复不得重提生成。
+网关重启只中断投递，worker继续运行，重连后扫描outbox。桌面按原目标和稳定 event ID 重放同一完成通知，避免丢回执后重复显示；Telegram 发送响应不确定时仍标记 delivery_uncertain，须显式 resend。resend 只补发已有图片，不重新生成。观察进程恢复不得重提生成。
 
 后台worker提供start/stop/restart/status脚本，记录日志、PID、启动标识和命令；信号前核验归属。stop仅停止观察，不等同取消Comfy任务。无新增launchd/systemd配置。
 

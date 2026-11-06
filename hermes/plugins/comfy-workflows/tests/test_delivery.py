@@ -34,8 +34,9 @@ class FakeStore:
         self.images = []
         self.actions = {}
 
-    def pending_outbox(self, limit=50):
-        return [dict(value) for value in self.events if value['state'] == 'pending'][:limit]
+    def pending_outbox(self, limit=50, origin=None):
+        return [dict(value) for value in self.events if value['state'] == 'pending'
+                and all(value['origin'].get(k) == v for k, v in (origin or {}).items())][:limit]
 
     def claim_outbox(self, event_id):
         event = next(value for value in self.events if value['event_id'] == event_id)
@@ -319,6 +320,43 @@ class DeliveryTest(unittest.IsolatedAsyncioTestCase):
         source = types.SimpleNamespace(platform='telegram', profile='default', chat_id='100', user_id='7',
                                        thread_id='2', _transport_adapter_ref=weakref.ref(other_adapter))
         self.assertEqual(delivery.current_origin(self.ctx, source=source)['bot'], '99')
+
+    async def test_gateway_desktop_route_preserves_session_identity_without_a_bot(self):
+        source = types.SimpleNamespace(platform='local', profile='default', chat_id='local-chat-a',
+                                       user_id='local-user', thread_id='')
+        values = {'HERMES_SESSION_ID': 'durable-a', 'HERMES_SESSION_PLATFORM': 'local'}
+        with patch.dict(sys.modules, {
+                'gateway.session_context': types.SimpleNamespace(
+                    bound_session_key=lambda: 'local:route-a', get_session_env=lambda key, default='': values.get(key, default)),
+                'gateway.plugin_messages': types.SimpleNamespace(bound_route=lambda: source)}):
+            captured = delivery.capture_origin(self.ctx)
+        self.assertEqual(captured, {
+            'profile': 'default', 'platform': 'local', 'bot': 'local', 'chat_id': 'local-chat-a',
+            'thread_id': '', 'user_id': 'local-user', 'session_key': 'local:route-a', 'session_id': 'durable-a',
+            'conversation_id': 'local-chat-a'})
+
+    async def test_local_route_never_replaces_missing_identity_with_shared_local_values(self):
+        for changed in ({'chat_id': ''}, {'user_id': ''}, {'session_key': ''}, {'session_id': ''}):
+            values = {'chat_id': 'local-chat-a', 'user_id': 'local-user',
+                      'session_key': 'local:route-a', 'session_id': 'durable-a', **changed}
+            source = types.SimpleNamespace(platform='local', profile='default',
+                                           chat_id=values['chat_id'], user_id=values['user_id'])
+            with self.subTest(missing=changed), self.assertRaises(ValueError):
+                delivery.current_origin(self.ctx, source=source,
+                                        session_key=values['session_key'], session_id=values['session_id'])
+
+    async def test_local_route_cannot_override_gateway_rejection_or_messaging_platform(self):
+        source = types.SimpleNamespace(platform='local', profile_route_rejected=True)
+        with self.assertRaisesRegex(ValueError, 'rejected'):
+            delivery.current_origin(self.ctx, source=source, session_key='a', session_id='a')
+        source = types.SimpleNamespace(platform='telegram', profile='default', chat_id='100', user_id='7')
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            delivery.current_origin(self.ctx, source=source, platform='desktop', session_key='a', session_id='a')
+
+    async def test_missing_telegram_bot_is_still_rejected(self):
+        source = types.SimpleNamespace(platform='telegram', profile='default', chat_id='100', user_id='7')
+        with self.assertRaisesRegex(ValueError, 'No verified bot'):
+            delivery.current_origin(self.ctx, source=source)
 
     def real_store(self):
         from importlib import import_module

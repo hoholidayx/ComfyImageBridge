@@ -53,6 +53,25 @@ class UnifiedEntryTest(unittest.TestCase):
         service.list.assert_called_once_with(query='robot', limit=20, origin=self.origin)
         self.assertTrue(result['success'])
 
+    def test_real_desktop_origin_flows_through_public_tool_dispatch(self):
+        source = SimpleNamespace(platform='local', profile='test', chat_id='desktop-chat',
+                                 user_id='desktop-user', thread_id='')
+        values = {'HERMES_SESSION_ID': 'durable-desktop'}
+        route = SimpleNamespace(bound_session_key=lambda: 'local:desktop-route',
+                                get_session_env=lambda key, default='': values.get(key, default))
+        service = Mock()
+        service.list.return_value = {'success': True, 'tasks': []}
+        with patch('unified_entry.jobs.JobService', return_value=service), \
+                patch.dict(sys.modules, {'gateway.session_context': route,
+                                        'gateway.plugin_messages': SimpleNamespace(bound_route=lambda: source)}):
+            result = json.loads(package.handle(self.ctx, 'comfy_task', {'action': 'list'}))
+        self.assertTrue(result['success'])
+        captured = service.list.call_args.kwargs['origin']
+        self.assertEqual(captured['bot'], 'local')
+        self.assertEqual(captured['chat_id'], 'desktop-chat')
+        self.assertEqual(captured['session_key'], 'local:desktop-route')
+        self.assertEqual(captured['session_id'], 'durable-desktop')
+
     def test_missing_runtime_does_not_create_generation(self):
         service = Mock()
         self.ctx.has_plugin = lambda name: False

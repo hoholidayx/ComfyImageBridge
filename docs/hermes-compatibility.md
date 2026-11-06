@@ -8,6 +8,7 @@
 - 带范围的原生命令、`register_platform_handler` 和 `pre_llm_call` hook，用于直接回调、图片索引与标题卡。
 - 可信会话来源与路由绑定，包括 `bound_session_key`、`bound_route` 和 `source_transport_ref`；直接投递必须回到原会话，不能以模型提供的聊天 ID 代替。
 - 现有 Telegram 适配器，用于图片主动推送、选项按钮和不经过模型的命令处理。CLI 主要用于调用/诊断；不保证其他平台拥有 Telegram 相同交互能力。
+- 桌面自动回图还需 `capture_delivery_target()`、`apublish_completion(target, event_id=..., text=..., artifacts=...)` 及 `spawn_task(..., on_gateway_loop=True)`。核心在可信调用中签发固定会话凭据，通过权威队列保存完成通知和稳定附件，不发起模型 turn；消费者运行于网关长存循环，热重载和临时 hook 不会结束它。桌面前端需同时支持 `plugin_completion` 的实时与历史呈现。旧核心仅有 `post_message` 文字通知时不能完成图片回传。
 
 缺少接口时请检查插件加载日志和诊断结果，先确定差异，再适配对应核心；不要删除鉴权、会话绑定或回调范围限制来让导入通过。本仓库安装器不会修改 Hermes 核心。
 

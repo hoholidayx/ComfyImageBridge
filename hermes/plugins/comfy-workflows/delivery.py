@@ -7,9 +7,10 @@ import shlex
 import weakref
 from pathlib import Path
 
+from .scope import LOCAL_PLATFORMS, same_scope
+
 LOG = logging.getLogger(__name__)
 _BINDINGS = []
-_SCOPE_KEYS = ('profile', 'platform', 'bot', 'chat_id', 'thread_id', 'user_id')
 _ACTIONS = frozenset(('status', 'cancel', 'retry', 'resend', 'resume', 'images'))
 
 
@@ -64,11 +65,24 @@ def current_origin(ctx, *, source=None, session_key='', session_id='', platform=
     }
     for name, env in (('chat_id', 'CHAT_ID'), ('thread_id', 'THREAD_ID'), ('user_id', 'USER_ID')):
         origin[name] = _text(getattr(source, name, None) if source is not None else read('HERMES_SESSION_' + env))
-    if surface in ('cli', 'local', 'tui', 'desktop') and not source and not bound_key:
+    if surface in LOCAL_PLATFORMS and not source and not bound_key and not session_key:
         origin.update(bot='local', chat_id='local', thread_id='', user_id='local')
         return origin
     if not origin['chat_id'] or not origin['user_id'] or not (source is not None or bound_key):
         raise ValueError('No trusted calling chat scope; notification destination is not guessed')
+    if surface in LOCAL_PLATFORMS:
+        if not origin['session_key'] or not origin['session_id']:
+            raise ValueError('No trusted local session identity; conversation destination is not guessed')
+        source_platform = _text(getattr(source, 'platform', None)) if source is not None else ''
+        if source_platform and source_platform not in LOCAL_PLATFORMS:
+            raise ValueError('Calling platform does not match the trusted route')
+        # Local sessions have no bot. Preserve the gateway's complete conversation
+        # identity; a shared local/local fallback would merge independent chats.
+        origin['bot'] = 'local'
+        # The local source names the logical conversation; SESSION_ID may rotate
+        # to a new physical history tip when the same conversation is compressed.
+        origin['conversation_id'] = origin['chat_id']
+        return origin
     source_adapter = getattr(source, '_transport_adapter_ref', None) if source is not None else None
     if isinstance(source_adapter, weakref.ReferenceType):
         source_adapter = source_adapter()
@@ -89,10 +103,6 @@ def current_origin(ctx, *, source=None, session_key='', session_id='', platform=
 
 def capture_origin(ctx):
     return current_origin(ctx)
-
-
-def same_scope(left, right):
-    return all(_text(left.get(key)) == _text(right.get(key)) for key in _SCOPE_KEYS)
 
 
 def _metadata(origin):
@@ -282,7 +292,8 @@ class Delivery:
             await self._store('mark_outbox', event['event_id'], 'delivered', button_error=_clean(exc))
 
     async def run_once(self):
-        events = await self._store('pending_outbox', limit=100)
+        events = await self._store('pending_outbox', limit=100,
+                                   origin={'profile': self.profile, 'platform': 'telegram', 'bot': self.bot_id})
         events = [event for event in events if self.owns(event.get('origin', {}))]
         latest = {}
         for event in events:
@@ -340,6 +351,11 @@ class Delivery:
 
 def install(ctx, data_dir, *, service=None, store=None):
     delivery = Delivery(ctx, data_dir, service=service, store=store)
+    if callable(getattr(ctx, 'apublish_completion', None)):
+        from .local_delivery import LocalDelivery
+        delivery.local = LocalDelivery(ctx, data_dir, service=delivery.service, store=delivery.store)
+        delivery.local.start()
+        ctx.register_hook('pre_llm_call', delivery.local.on_session)
     ctx.register_platform_handler('telegram', delivery.factory)
     ctx.register_command('comfy', delivery.command, description='Comfy 任务、取消、显式重试和图片索引',
                          args_hint='status|cancel|retry|resume|resend|images|run [ID/关键词/JSON]')

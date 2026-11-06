@@ -1,5 +1,5 @@
 name: comfy-workflows
-version: 0.6.1
+version: 0.6.2
 description: 统一后台生图、多图编辑、分辨率选择与直接消息回调；保留轻量图片标题索引
 author: hoholiday
 python_runtime: external

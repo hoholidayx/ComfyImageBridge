@@ -2,7 +2,7 @@
 import hashlib
 from pathlib import Path
 
-PLUGIN_VERSION = '0.6.1'
+PLUGIN_VERSION = '0.6.2'
 CONTRACT_VERSION = 7
 ROOT = Path(__file__).resolve().parent
 digest = hashlib.sha256()

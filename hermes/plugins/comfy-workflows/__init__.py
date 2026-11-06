@@ -134,7 +134,7 @@ def _public_job(value):
                'count', 'width', 'height', 'path', 'expired', 'reference_ids', 'artifacts', 'tasks',
                'worker_running', 'elapsed_seconds', 'queued_seconds', 'running_seconds', 'stalled',
                'last_progress_at', 'stall_reason', 'cancel_requested', 'error', 'message', 'receipt_path', 'created_at',
-               'type', 'retry_submission', 'retry_allowed', 'event_id'}
+               'type', 'retry_submission', 'retry_allowed', 'event_id', 'delivery_state', 'delivery_error'}
     return {key: _public_job(item) for key, item in value.items() if key in allowed}
 
 

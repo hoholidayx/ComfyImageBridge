@@ -29,6 +29,8 @@ from comfy_job_tests.worker import Runner, manage
 
 ORIGIN = {'profile': 'default', 'bot': '123', 'platform': 'telegram', 'chat_id': '10',
           'thread_id': '', 'user_id': '20', 'session_key': 'test', 'session_id': 'test-session'}
+LOCAL_ORIGIN = {**ORIGIN, 'platform': 'local', 'bot': 'local',
+                'session_key': 'local-route', 'conversation_id': 'local-conversation', 'session_id': 'physical-tip'}
 
 
 def png(width=64, height=64):
@@ -89,7 +91,8 @@ class JobTest(unittest.TestCase):
         self.temp.cleanup()
 
     def create(self, args=None, origin=None):
-        with patch('comfy_job_tests.worker.launch', return_value={'started': True}):
+        with patch('comfy_job_tests.worker.launch', return_value={'started': True}), \
+             patch('comfy_job_tests.local_delivery.prepare_origin', side_effect=lambda ctx, value: value):
             return self.service.create(args or {'prompt': 'a geometric robot'}, origin or ORIGIN)['task_id']
 
     def test_normalization_and_safe_defaults(self):
@@ -122,6 +125,130 @@ class JobTest(unittest.TestCase):
         for method in (lambda: self.service.status(task_id), lambda: self.service.list(), lambda: self.service.cancel(task_id)):
             with self.assertRaises(ValueError):
                 method()
+
+    def test_local_sessions_isolate_jobs_actions_and_image_references(self):
+        task_id = self.create(origin=LOCAL_ORIGIN)
+        path = self.root/'local-artifact.png'
+        path.write_bytes(png())
+        artifacts = self.store.register_outputs(task_id, [{'path': str(path), 'width': 64, 'height': 64}])
+        image_id = artifacts[0]['image_id']
+        self.store.update_job(task_id, state='failed', retry_allowed=True, artifacts=artifacts)
+        token = self.store.create_action(task_id, 'status', origin=LOCAL_ORIGIN)
+        for changed in ({'session_key': 'another-route'}, {'conversation_id': 'another-conversation'}):
+            other = {**LOCAL_ORIGIN, **changed}
+            with self.subTest(changed=changed):
+                self.assertEqual(self.service.list(origin=other), {'success': True, 'tasks': [], 'artifacts': []})
+                actions = {
+                    'status': lambda: self.service.status(task_id, origin=other),
+                    'cancel': lambda: self.service.cancel(task_id, origin=other),
+                    'retry': lambda: self.service.retry(task_id, origin=other),
+                    'resume': lambda: self.service.resume(task_id, origin=other),
+                    'resend': lambda: self.service.resend(image_id, origin=other),
+                    'button': lambda: self.service.apply_action(token, other),
+                    'reference': lambda: self.create({'prompt': 'edit geometric shapes', 'images': [image_id]}, origin=other),
+                }
+                for action, call in actions.items():
+                    with self.subTest(action=action), self.assertRaises(PermissionError):
+                        call()
+        self.assertEqual(self.service.status(task_id, origin=LOCAL_ORIGIN)['task_id'], task_id)
+        self.assertEqual(self.service.apply_action(token, LOCAL_ORIGIN)['task_id'], task_id)
+        self.assertEqual(self.service.resend(image_id, origin=LOCAL_ORIGIN)['state'], 'pending_delivery')
+        edit_id = self.create({'prompt': 'edit geometric shapes', 'images': [image_id]}, origin=LOCAL_ORIGIN)
+        self.assertEqual(self.store.get_job(edit_id)['reference_ids'], [image_id])
+
+    def test_local_compression_keeps_task_and_artifact_access(self):
+        task_id = self.create(origin=LOCAL_ORIGIN)
+        path = self.root/'compressed-artifact.png'
+        path.write_bytes(png())
+        artifacts = self.store.register_outputs(task_id, [{'path': str(path), 'width': 64, 'height': 64}])
+        self.store.update_job(task_id, artifacts=artifacts)
+        compressed = {**LOCAL_ORIGIN, 'session_id': 'new-physical-tip'}
+        self.assertEqual(self.service.status(task_id, origin=compressed)['task_id'], task_id)
+        self.assertEqual(self.service.list(origin=compressed)['tasks'][0]['task_id'], task_id)
+        self.assertEqual(self.service.resend(artifacts[0]['image_id'], origin=compressed)['state'], 'pending_delivery')
+        edit_id = self.create({'prompt': 'edit geometric shapes', 'images': [artifacts[0]['image_id']]}, origin=compressed)
+        self.assertEqual(self.store.get_job(edit_id)['reference_ids'], [artifacts[0]['image_id']])
+
+    def test_local_delivery_preflight_precedes_task_files_and_worker_launch(self):
+        with patch('comfy_job_tests.local_delivery.prepare_origin', side_effect=ValueError('no delivery API')), \
+             patch('comfy_job_tests.worker.launch') as launch:
+            with self.assertRaisesRegex(ValueError, 'no delivery API'):
+                self.service.create({'prompt': 'geometric shapes'}, LOCAL_ORIGIN)
+        launch.assert_not_called()
+        self.assertEqual(self.store.jobs(origin=LOCAL_ORIGIN), [])
+        self.assertFalse((self.root/'jobs').exists())
+
+    def test_telegram_session_rotation_keeps_existing_chat_scope(self):
+        task_id = self.create()
+        rotated = {**ORIGIN, 'session_key': 'another-key', 'session_id': 'another-session'}
+        self.assertEqual(self.service.status(task_id, origin=rotated)['task_id'], task_id)
+        self.assertEqual(self.service.list(origin=rotated)['tasks'][0]['task_id'], task_id)
+
+    def test_pending_outbox_filters_route_before_limit(self):
+        foreign_id = self.create(origin=LOCAL_ORIGIN)
+        for revision in range(105):
+            self.store.enqueue(foreign_id, 'progress', {'message': 'synthetic progress'}, revision=revision)
+        telegram_id = self.create()
+        telegram_event = self.store.enqueue(telegram_id, 'completed', {'text': 'synthetic completion'})
+        local_origin = {**LOCAL_ORIGIN, 'conversation_id': 'another-conversation'}
+        local_id = self.create(origin=local_origin)
+        local_event = self.store.enqueue(local_id, 'completed', {'text': 'synthetic completion'})
+        self.assertEqual(len(self.store.pending_outbox(limit=100)), 100)
+        telegram_binding = {key: ORIGIN[key] for key in ('profile', 'platform', 'bot')}
+        self.assertEqual(self.store.pending_outbox(limit=1, origin=telegram_binding), [telegram_event])
+        self.assertEqual(self.store.pending_outbox(limit=1, origin=local_origin), [local_event])
+        reopened = Store(self.root)
+        self.assertEqual(reopened.pending_outbox(limit=1, origin=local_origin), [local_event])
+
+    def test_pending_outbox_partial_session_filters_match_shared_scope_rules(self):
+        local_ids = []
+        for origin in (LOCAL_ORIGIN, {**LOCAL_ORIGIN, 'session_key': 'another-key'},
+                       {**LOCAL_ORIGIN, 'conversation_id': 'another-conversation'},
+                       {**LOCAL_ORIGIN, 'session_id': 'compressed-tip'},
+                       {key: value for key, value in LOCAL_ORIGIN.items() if key != 'conversation_id'},
+                       {**LOCAL_ORIGIN, 'conversation_id': ''}, ORIGIN):
+            task_id = self.create(origin=origin)
+            local_ids.append(self.store.enqueue(task_id, 'progress', {'message': 'synthetic progress'}))
+        for caller in ({'profile': 'default', 'platform': 'local', 'bot': 'local'},
+                       {'session_key': LOCAL_ORIGIN['session_key']},
+                       {'conversation_id': LOCAL_ORIGIN['conversation_id']},
+                       {'session_id': LOCAL_ORIGIN['session_id']},
+                       {**LOCAL_ORIGIN, 'session_id': 'compressed-tip'},
+                       {'conversation_id': '', 'session_id': LOCAL_ORIGIN['session_id']},
+                       {'session_key': '', 'session_id': ''},
+                       {**ORIGIN, 'session_key': 'rotated', 'session_id': 'rotated'},
+                       {'unknown_scope_field': 'ignored'}):
+            with self.subTest(caller=caller):
+                expected = [event for event in local_ids if scope_matches(event['origin'], caller)]
+                self.assertEqual(self.store.pending_outbox(origin=caller), expected)
+
+    def test_replay_safe_outbox_recovery_requires_local_binding_and_target(self):
+        binding = {'profile': LOCAL_ORIGIN['profile'], 'platform': 'local', 'bot': 'local'}
+        target_origin = {**LOCAL_ORIGIN, 'delivery_target': {'conversation_id': LOCAL_ORIGIN['conversation_id']}}
+        targeted_id = self.create(origin=target_origin)
+        targeted = self.store.enqueue(targeted_id, 'completed', {'text': 'synthetic completion'})
+        legacy_id = self.create(origin=LOCAL_ORIGIN)
+        legacy = self.store.enqueue(legacy_id, 'completed', {'text': 'synthetic completion'})
+        telegram_id = self.create()
+        telegram = self.store.enqueue(telegram_id, 'completed', {'text': 'synthetic completion'})
+        for event in (targeted, legacy, telegram):
+            self.assertTrue(self.store.claim_outbox(event['event_id']))
+        for invalid in (None, {}, {'profile': 'default'},
+                        {'platform': 'local', 'bot': 'local'},
+                        {**binding, 'bot': '123'}, {**binding, 'platform': 'telegram'}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.store.recover_outbox(origin=invalid, replay_safe=True)
+        self.assertEqual(self.store.recover_outbox(origin=binding, replay_safe=True), 2)
+        self.assertEqual([event['event_id'] for event in self.store.pending_outbox(origin=binding)], [targeted['event_id']])
+        self.assertEqual(self._outbox_event(legacy['event_id'])['state'], 'delivery_uncertain')
+        self.assertEqual(self._outbox_event(telegram['event_id'])['state'], 'sending')
+        self.assertEqual(self.store.recover_outbox(origin=ORIGIN), 1)
+        self.assertEqual(self._outbox_event(telegram['event_id'])['state'], 'delivery_uncertain')
+
+    def _outbox_event(self, event_id):
+        with self.store.connection() as db:
+            row = db.execute('SELECT body FROM outbox WHERE event_id=?', (event_id,)).fetchone()
+        return json.loads(row[0])
 
     def test_edit_auto_submits_original_first_image_size_before_reference_resize(self):
         source = self.root/'original-512.png'
@@ -333,7 +460,7 @@ class JobTest(unittest.TestCase):
         # real OS process/session behavior without any network, WoL or GPU work.
         copied = self.root/'fixture'/'comfy-workflows'
         copied.mkdir(parents=True)
-        for name in ('jobs.py', 'worker.py', 'transport.py', 'metadata.py', 'plugin.yaml'):
+        for name in ('jobs.py', 'scope.py', 'worker.py', 'transport.py', 'metadata.py', 'plugin.yaml'):
             shutil.copyfile(ROOT/name, copied/name)
         dependency = copied.parent/'ubuntu-runtime'
         dependency.mkdir()

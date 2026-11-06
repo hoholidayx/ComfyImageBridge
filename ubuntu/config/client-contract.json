@@ -3,8 +3,8 @@
   "contract_version": 7,
   "plugins": {
     "comfy-workflows": {
-      "version": "0.6.1",
-      "hash": "df1d94bdb8cdd769a6be1ce32b2ac25d6a0437e18a5572080e6512584ddf3b9d"
+      "version": "0.6.2",
+      "hash": "b11d2d556259e18b5c44225d0b0892cba2097c1d42935fd145518d8dd3cfe085"
     },
     "ubuntu-runtime": {
       "version": "0.3.1",

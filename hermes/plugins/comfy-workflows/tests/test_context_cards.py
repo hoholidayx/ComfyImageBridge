@@ -82,6 +82,17 @@ class ContextCardsTest(unittest.TestCase):
         self.assertIn('不可作参考图', result['context'])
         self.assertNotIn('/path/to', result['context'])
 
+    def test_local_cards_follow_logical_conversation_through_compression(self):
+        local = {**ORIGIN, 'platform': 'local', 'bot': 'local', 'session_key': 'local:route',
+                 'conversation_id': 'logical-a', 'session_id': 'old-tip'}
+        current = {**local, 'session_id': 'new-tip'}
+        collector = self.collector(artifact(1, origin=local),
+                                   artifact(2, origin={**local, 'conversation_id': 'logical-b'}))
+        with patch.object(cards, 'capture_origin', return_value=current):
+            result = collector.before_turn(session_id='new-tip')
+        self.assertIn('[comfy-image:image-1]', result['context'])
+        self.assertNotIn('[comfy-image:image-2]', result['context'])
+
     def test_total_injected_characters_are_bounded(self):
         collector = self.collector(*(artifact(i, title='很长的标题' * 100,
                                              reference_ids=['x' * 500] * 10) for i in range(4)))
