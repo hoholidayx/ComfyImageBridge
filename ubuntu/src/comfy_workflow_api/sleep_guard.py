@@ -12,6 +12,7 @@ import time
 import uuid
 from .client import Client
 from .storage import now, read_json, write_json
+from .lifecycle import ANY_EPOCH
 
 
 def home(api):
@@ -188,16 +189,22 @@ def start(api):
 
 
 @contextmanager
-def hold(api, operation_id=None, task_id=None, service_instance_id=None, purpose=None):
+def hold(api, operation_id=None, task_id=None, service_instance_id=None, purpose=None,
+         expected_sleep_epoch=ANY_EPOCH):
+    from .sleep_cycle import admission_lock, assert_allowed
     if not api.settings.get('sleep_guard', {}).get('enabled', False):
+        with admission_lock(api):
+            assert_allowed(api, expected_sleep_epoch)
         yield
         return
     lease = uuid.uuid4().hex
     path = home(api)/'leases'/f'{lease}.json'
-    with control(api):
-        write_json(path, {'lease_id': lease, 'owner': identity(os.getpid()), 'created_at': now(),
-            'operation_id': operation_id or str(uuid.uuid4()), 'task_id': task_id,
-            'service_instance_id': service_instance_id, 'purpose': purpose or 'request'})
+    with admission_lock(api):
+        assert_allowed(api, expected_sleep_epoch)
+        with control(api):
+            write_json(path, {'lease_id': lease, 'owner': identity(os.getpid()), 'created_at': now(),
+                'operation_id': operation_id or str(uuid.uuid4()), 'task_id': task_id,
+                'service_instance_id': service_instance_id, 'purpose': purpose or 'request'})
     try:
         start(api)
         yield

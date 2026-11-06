@@ -39,10 +39,16 @@ def execute(root, operation_id):
     try:
         if meta['stale_copy']:
             raise RuntimeError('stale_copy: source changed before operation started')
-        with sleep_guard.hold(api, operation_id=operation_id, purpose='service_'+packet['action'], service_instance_id=receipt['before'].get('service_instance_id')):
+        # Legacy receipts without a dispatch epoch cannot safely authorize a
+        # mutation of whichever service instance happens to be running now.
+        expected_epoch = receipt.get('admission_epoch')
+        with sleep_guard.hold(api, operation_id=operation_id, purpose='service_'+packet['action'],
+                              service_instance_id=receipt['before'].get('service_instance_id'),
+                              expected_sleep_epoch=expected_epoch):
             receipt['guard_during_operation'] = sleep_guard.status(api)
             write_json(directory/'receipt.json', receipt)
-            changed = manager.execute(packet['action'], operation_id=operation_id)
+            changed = manager.execute(packet['action'], operation_id=operation_id,
+                                      expected_sleep_epoch=expected_epoch)
         unverified = packet['action'] != 'stop' and not changed.get('ready')
         result = {'success':not unverified and not changed.get('busy',False) and not changed.get('blocked',False) and changed.get('state') != 'blocked',
                   'power_state':'online','host_awake':True,'ssh_reachable':True,'service':service_summary(manager),

@@ -1,0 +1,9 @@
+# Store a private copy at ~/.config/myhermes2comfy/smtp.toml; chmod 600.
+# Example addresses only. Never commit your private copy or app password.
+host = "smtp.example.com"
+port = 587
+security = "starttls" # "ssl" uses implicit TLS, normally port 465.
+username = "monitor@example.com"
+password = "REPLACE_WITH_MAIL_APP_PASSWORD"
+from_address = "monitor@example.com"
+to_addresses = ["owner@example.com"]

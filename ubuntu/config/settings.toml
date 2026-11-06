@@ -21,3 +21,16 @@ comfy_input_dir = ""
 enabled = true
 poll_seconds = 2
 idle_grace_seconds = 10
+
+[monitor]
+sample_seconds = 15
+probe_timeout_seconds = 5
+failure_samples = 3
+recovery_samples = 3
+reminder_seconds = 1800
+temp_warning_margin = 10
+temp_critical_margin = 5
+
+[monitor.smtp]
+# Copy smtp.example.toml here on the Ubuntu host and chmod 600 the file.
+secret_file = "~/.config/myhermes2comfy/smtp.toml"

@@ -18,10 +18,12 @@ import sys
 import time
 import urllib.parse
 import uuid
+from types import SimpleNamespace
 
 from comfy_workflow_api.client import APIError, Client, png_size
 from comfy_workflow_api.compiler import compile_graph
 from comfy_workflow_api.sleep_guard import identity, matches
+from comfy_workflow_api.lifecycle import ANY_EPOCH
 from comfy_workflow_api.storage import now, read_json, write_json
 from comfy_workflow_api.settings import load_settings, module_root, service_paths
 
@@ -244,6 +246,13 @@ def status():
                    stale={'instance_metadata': False, 'http': False, 'render_verification': not verified,
                           'resume': resume.get('source') == 'unknown'})
     current['healthy'] = current['ready']  # Compatibility, never HTTP-only liveness.
+    from comfy_workflow_api.sleep_cycle import status as cycle_status
+    current['sleep_cycle'] = cycle_status(SimpleNamespace(data=DATA.parent))
+    try:
+        from comfy_workflow_api.hardware_monitor import status as hardware_status
+        current['hardware_health'] = hardware_status(ROOT)
+    except Exception as exc:
+        current['hardware_health'] = {'status': 'unknown', 'error': str(exc)}
     return current
 
 
@@ -760,9 +769,11 @@ def _recover():
 
 
 @contextmanager
-def admission(operation_id):
+def admission(operation_id, expected_sleep_epoch=ANY_EPOCH):
     gate = DATA/'admission.json'
     with lock('admission.lock'):
+        from comfy_workflow_api.sleep_cycle import assert_allowed
+        assert_allowed(SimpleNamespace(data=DATA.parent), expected_sleep_epoch)
         if gate.exists():
             prior = read_json(gate)
             if prior.get('blocked',True) and prior.get('operation_id') != operation_id:
@@ -784,13 +795,13 @@ def admission(operation_id):
                 gate.unlink()
 
 
-def execute(action, operation_id=None):
+def execute(action, operation_id=None, expected_sleep_epoch=ANY_EPOCH):
     if action == 'status':
         return status()
     if action not in ('start','stop','restart','ensure_ready','recover'):
         raise ValueError('Unsupported service action')
     operation_id = operation_id or str(uuid.uuid4())
-    with lock(), admission(operation_id):
+    with lock(), admission(operation_id, expected_sleep_epoch):
         if STATE.exists():
             state = read_json(STATE)
             state['operation_id'] = operation_id

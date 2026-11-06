@@ -11,6 +11,7 @@ import uuid
 
 from comfy_workflow_api import runtime_bridge as bridge
 from comfy_workflow_api import runtime_operation_worker as worker
+from comfy_workflow_api import hardware_monitor, sleep_cycle
 
 
 class BridgeTest(unittest.TestCase):
@@ -55,6 +56,52 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(receipt['worker']['pid'],123)
         self.assertTrue(receipt['command'])
         self.assertTrue(receipt['log'].endswith('worker.log'))
+        self.assertEqual(receipt['admission_epoch'], sleep_cycle.admission_epoch(self.api))
+
+    def test_power_status_uses_gpu_cache_without_reading_gpu_sysfs(self):
+        cached = {'stale': False, 'gpu': {'status': 'ok', 'observed_at': 'cached-time', 'gpus': [
+            {'pci': '0000:03:00.0', 'utilization_percent': 42, 'vram_used_bytes': 123,
+             'vram_total_bytes': 456, 'runtime_status': 'active',
+             'power_watts': 46.5, 'power_sensor': 'power1_average'}]}}
+        def read_system(path):
+            self.assertNotIn('/sys/class/drm', str(path))
+            self.assertNotIn('/sys/bus/pci', str(path))
+            return None
+        with patch.object(hardware_monitor, 'status', return_value=cached) as status, \
+             patch.object(bridge, 'command', return_value={}), \
+             patch.object(bridge, 'text', side_effect=read_system), \
+             patch.object(Path, 'glob', side_effect=AssertionError('GPU enumeration is forbidden')):
+            result = bridge.power_status(self.root)
+        status.assert_called_once_with(self.root)
+        self.assertEqual(result['gpu_status'], 'ok')
+        self.assertEqual(result['gpus'][0]['gpu_busy_percent'], 42)
+        self.assertEqual(result['gpus'][0]['observed_at'], 'cached-time')
+        self.assertFalse(result['gpus'][0]['stale'])
+        self.assertEqual(result['gpus'][0]['power_watts'], 46.5)
+        self.assertEqual(result['gpus'][0]['runtime_status'], 'active')
+
+    def test_missing_gpu_snapshot_is_unknown_and_read_only(self):
+        (self.root/'config').mkdir()
+        (self.root/'config/settings.toml').write_text('data_dir="data"\n')
+        with patch.object(bridge, 'command', return_value={}), \
+             patch.object(bridge, 'text', return_value=None), \
+             patch.object(Path, 'glob', side_effect=AssertionError('GPU enumeration is forbidden')):
+            result = bridge.power_status(self.root)
+        self.assertEqual(result['gpu_status'], 'unknown')
+        self.assertTrue(result['gpu_stale'])
+        self.assertIsNone(result['gpu_observed_at'])
+        self.assertEqual(result['gpus'], [])
+        self.assertFalse(self.api.data.exists())
+
+    def test_old_gpu_cache_keeps_its_observation_time_and_is_unknown(self):
+        cached = {'stale': True, 'gpu': {'status': 'ok', 'observed_at': 'old-time',
+                                      'gpus': [{'pci': '0000:03:00.0', 'utilization_percent': 0}]}}
+        with patch.object(hardware_monitor, 'status', return_value=cached), \
+             patch.object(bridge, 'command', return_value={}), patch.object(bridge, 'text', return_value=None):
+            result = bridge.power_status(self.root)
+        self.assertEqual(result['gpu_status'], 'unknown')
+        self.assertTrue(result['gpus'][0]['stale'])
+        self.assertEqual(result['gpus'][0]['observed_at'], 'old-time')
 
     def test_dead_worker_has_explicit_recover_escape_without_duplicate_retry(self):
         operations=self.api.data/'runtime-operations'
@@ -145,7 +192,8 @@ class BridgeTest(unittest.TestCase):
         directory=self.api.data/'runtime-operations'/self.packet['operation_id']
         directory.mkdir(parents=True)
         (directory/'request.json').write_text(json.dumps(self.packet))
-        (directory/'receipt.json').write_text(json.dumps({'worker':{'pid':worker.os.getpid()}}))
+        (directory/'receipt.json').write_text(json.dumps({'worker':{'pid':worker.os.getpid()},
+            'admission_epoch': sleep_cycle.admission_epoch(self.api)}))
         events=[]
         @contextmanager
         def hold(api,**kwargs):
@@ -162,12 +210,32 @@ class BridgeTest(unittest.TestCase):
         self.assertTrue(final['finished_at'])
         manager.execute.assert_called_once()
 
+    def test_legacy_worker_without_dispatch_epoch_fails_before_lease_or_mutation(self):
+        directory = self.api.data/'runtime-operations'/self.packet['operation_id']
+        directory.mkdir(parents=True)
+        (directory/'request.json').write_text(json.dumps(self.packet))
+        (directory/'receipt.json').write_text(json.dumps({'worker': {'pid': worker.os.getpid()}}))
+        self.api.settings = {'sleep_guard': {'enabled': True}}
+        manager = SimpleNamespace(status=self.manager.status, execute=Mock())
+        with patch.object(worker, 'WorkflowAPI', return_value=self.api), \
+             patch.object(worker, 'manager_for', return_value=manager), \
+             patch.object(worker, 'meta_for', return_value={'stale_copy': False}), \
+             patch.object(worker.sleep_guard, 'matches', return_value=True), \
+             patch.object(worker.sleep_guard, 'start') as start, \
+             patch.object(worker.sleep_guard, 'status', return_value={}):
+            result = worker.execute(self.root, self.packet['operation_id'])
+        self.assertEqual(result['error']['type'], 'SleepPending')
+        manager.execute.assert_not_called()
+        start.assert_not_called()
+        self.assertFalse(list((self.api.data/'sleep-guard/leases').glob('*.json')))
+
     def test_failed_smoke_cannot_be_reported_as_successful_finished_operation(self):
         from contextlib import nullcontext
         directory=self.api.data/'runtime-operations'/self.packet['operation_id']
         directory.mkdir(parents=True)
         (directory/'request.json').write_text(json.dumps(self.packet))
-        (directory/'receipt.json').write_text(json.dumps({'worker':{'pid':worker.os.getpid()}}))
+        (directory/'receipt.json').write_text(json.dumps({'worker':{'pid':worker.os.getpid()},
+            'admission_epoch': sleep_cycle.admission_epoch(self.api)}))
         manager=SimpleNamespace(status=self.manager.status,
             execute=Mock(return_value={'ready':False,'smoke_failed':True,'smoke':{'error':'observation timed out'}}))
         with patch.object(worker,'WorkflowAPI',return_value=self.api), \

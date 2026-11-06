@@ -33,36 +33,33 @@ def text(path):
         return None
 
 
-def power_status():
+def power_status(root):
     session = command(['loginctl', 'show-user', str(os.getuid()), '-p', 'Display', '--value']).get('stdout', '')
     desktop = command(['loginctl', 'show-session', session, '-p', 'IdleHint', '-p', 'IdleSinceHint', '-p', 'State', '-p', 'Type']) if re.fullmatch(r'[a-zA-Z0-9]+', session) else {'message': 'No graphical session found'}
     settings = {}
     for key in ('sleep-inactive-ac-type', 'sleep-inactive-ac-timeout'):
         settings[key] = command(['gsettings', 'get', 'org.gnome.settings-daemon.plugins.power', key])
-    gpus = []
-    for device in sorted(Path('/sys/class/drm').glob('card[0-9]*/device')):
-        if text(device/'vendor') != '0x1002':
-            continue
-        gpu = {'observed_at':now(), 'stale':False, 'device': str(device.resolve()), 'runtime_status': text(device/'power/runtime_status')}
-        for field, filename, divisor in (
-            ('vram_used_bytes', 'mem_info_vram_used', 1),
-            ('vram_total_bytes', 'mem_info_vram_total', 1),
-            ('gpu_busy_percent', 'gpu_busy_percent', 1),
-        ):
-            value = text(device/filename)
-            gpu[field] = int(value)//divisor if value and value.isdigit() else None
-        for sensor in ('power1_average', 'power1_input'):
-            files = list((device/'hwmon').glob('hwmon*/'+sensor))
-            value = text(files[0]) if files else None
-            if value and value.isdigit():
-                gpu['power_watts'] = int(value)/1_000_000
-                gpu['power_sensor'] = sensor
-                break
-        gpus.append(gpu)
+    from .hardware_monitor import status as hardware_status
+    try:
+        cached = hardware_status(root)
+        sample = cached.get('gpu') or {}
+    except Exception as exc:
+        cached, sample = {'stale': True}, {'status': 'unknown', 'error': str(exc)}
+    gpu_stale = bool(cached.get('stale', True) or not sample.get('observed_at'))
+    gpu_status = 'unknown' if gpu_stale else sample.get('status', 'unknown')
+    gpus = [{**gpu, 'observed_at': sample.get('observed_at'), 'stale': gpu_stale,
+             'device': '/sys/bus/pci/devices/'+gpu['pci'] if gpu.get('pci') else None,
+             'runtime_status': gpu.get('runtime_status'),
+             'gpu_busy_percent': gpu.get('utilization_percent'),
+             'vram_used_bytes': gpu.get('vram_used_bytes'),
+             'vram_total_bytes': gpu.get('vram_total_bytes'),
+             'power_watts': gpu.get('power_watts'), 'power_sensor': gpu.get('power_sensor')}
+            for gpu in sample.get('gpus', [])]
     return {'observed_at':now(),'stale':False,'boot_id': text('/proc/sys/kernel/random/boot_id'), 'uptime': text('/proc/uptime'),
             'mem_sleep': text('/sys/power/mem_sleep'), 'desktop': desktop,
             'automatic_suspend': settings, 'system_inhibitors': command(['systemd-inhibit', '--list', '--no-pager']),
-            'gnome_inhibitors': command(['/usr/bin/gnome-session-inhibit', '--list']), 'gpus': gpus}
+            'gnome_inhibitors': command(['/usr/bin/gnome-session-inhibit', '--list']), 'gpus': gpus,
+            'gpu_status': gpu_status, 'gpu_observed_at': sample.get('observed_at'), 'gpu_stale': gpu_stale}
 
 
 def service_summary(manager):
@@ -154,31 +151,37 @@ def reconcile_confirmation(result, live, manager):
 
 
 def launch(api, root, packet, meta):
-    operations = api.data/'runtime-operations'
-    operations.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (operations/'launch.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        directory = operations/packet['operation_id']
-        if (directory/'receipt.json').exists():
-            return operation_status(api, packet['operation_id'])
-        active = read_json(operations/'active.json')
-        if active.get('operation_id'):
-            prior = operation_status(api, active['operation_id'])
-            if prior.get('state') == 'in_progress' or (prior.get('state') == 'outcome_unknown' and packet['action'] != 'recover'):
-                return {**prior, 'existing_operation': True}
-        directory.mkdir(mode=0o700)
-        write_json(directory/'request.json', packet)
-        os.chmod(directory/'request.json', 0o600)
-        argv = [sys.executable, '-m', 'comfy_workflow_api.runtime_operation_worker', str(root), packet['operation_id']]
-        with (directory/'worker.log').open('ab', buffering=0) as log:
-            process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                       cwd=root, start_new_session=True, close_fds=True)
-        identity = sleep_guard.identity(process.pid)
-        receipt = {'operation_id': packet['operation_id'], 'action':packet['action'], 'started_at':now(),
-                   'worker':identity, 'session_id':os.getsid(process.pid), 'process_group_id':os.getpgid(process.pid), 'command':argv, 'log':str(directory/'worker.log'), 'metadata':meta,
-                   'response':{'success':True,'ready':False,'state':'in_progress','metadata':meta}}
-        write_json(directory/'receipt.json', receipt)
-        write_json(operations/'active.json', {'operation_id':packet['operation_id']})
+    from .sleep_cycle import admission_epoch, admission_lock, assert_allowed
+    with admission_lock(api):
+        assert_allowed(api)
+        epoch = admission_epoch(api)
+        operations = api.data/'runtime-operations'
+        operations.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with (operations/'launch.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            directory = operations/packet['operation_id']
+            if (directory/'receipt.json').exists():
+                return operation_status(api, packet['operation_id'])
+            active = read_json(operations/'active.json')
+            if active.get('operation_id'):
+                prior = operation_status(api, active['operation_id'])
+                if prior.get('state') == 'in_progress' or (prior.get('state') == 'outcome_unknown' and packet['action'] != 'recover'):
+                    return {**prior, 'existing_operation': True}
+            directory.mkdir(mode=0o700)
+            write_json(directory/'request.json', packet)
+            os.chmod(directory/'request.json', 0o600)
+            argv = [sys.executable, '-m', 'comfy_workflow_api.runtime_operation_worker', str(root), packet['operation_id']]
+            with (directory/'worker.log').open('ab', buffering=0) as log:
+                process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                           cwd=root, start_new_session=True, close_fds=True)
+            identity = sleep_guard.identity(process.pid)
+            receipt = {'operation_id': packet['operation_id'], 'action':packet['action'], 'started_at':now(),
+                       'admission_epoch': epoch, 'worker':identity, 'session_id':os.getsid(process.pid),
+                       'process_group_id':os.getpgid(process.pid), 'command':argv,
+                       'log':str(directory/'worker.log'), 'metadata':meta,
+                       'response':{'success':True,'ready':False,'state':'in_progress','metadata':meta}}
+            write_json(directory/'receipt.json', receipt)
+            write_json(operations/'active.json', {'operation_id':packet['operation_id']})
     return operation_status(api, packet['operation_id'])
 
 
@@ -211,7 +214,7 @@ def invoke(packet):
             return result
         return {'success':True,'ready':manager.status().get('ready',False),'power_state':'online',
                 'ssh_reachable':True,'service':service_summary(manager),'sleep_guard':sleep_guard.status(api),
-                'ubuntu':power_status(),'observed_at':now(),'metadata':meta}
+                'ubuntu':power_status(root),'observed_at':now(),'metadata':meta}
     result = launch(api, root, packet, meta)
     deadline = time.monotonic()+wait
     while result.get('state') == 'in_progress' and time.monotonic() < deadline:

@@ -4,6 +4,9 @@ import fcntl
 import os
 from .storage import now, read_json, write_json
 
+# Shared without importing the sleep CLI during package initialization.
+ANY_EPOCH = object()
+
 
 def service_state(api):
     path = api.data/'comfyui-service/state.json'
@@ -38,6 +41,8 @@ def submission(api, task_id, operation_id):
     reservation = folder/'inflight'/f'{operation_id}.json'
     with (folder/'admission.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
+        from .sleep_cycle import assert_allowed
+        assert_allowed(api)
         gate = folder/'admission.json'
         if gate.exists():
             value = read_json(gate)
