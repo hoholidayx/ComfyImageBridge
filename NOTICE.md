@@ -1,6 +1,6 @@
 # 来源与许可说明
 
-本仓库整理现有 MyHermes2Comfy 插件与 ComfyUI 工作流调用代码，分离客户端和 Ubuntu 服务端。它不是 Hermes、ComfyUI、Qwen 或 ROCm 的官方发行版。
+ComfyImageBridge 整理 Hermes 插件与 ComfyUI 工作流调用代码，分离客户端和 Ubuntu 服务端。它不是 Hermes、ComfyUI、Qwen 或 ROCm 的官方发行版。
 
 - Hermes 核心、ComfyUI 核心、自定义节点与模型权重不包含在此仓库；它们各自的许可仍适用。
 - `ubuntu/workflows/` 保存用于本地调用的工作流 JSON 配置与来源信息，不包含模型参数。快照中的默认提示词与参考图文件名已替换为公开的几何示例。

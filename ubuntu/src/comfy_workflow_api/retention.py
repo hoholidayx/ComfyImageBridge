@@ -16,6 +16,10 @@ def cleanup_lock(data):
         yield
 
 
+def result_pin(directory):
+    return directory / '.result-pinned'
+
+
 def _safe_root(path, parent):
     path = Path(path).absolute()
     if path.name != 'comfy-workflow-api' or path.parent.name != parent or path.resolve() != path:
@@ -49,7 +53,8 @@ def cleanup(api, dry_run=False, protect_task=None):
             task = read_json(directory / 'task.json')
             if task.get('task_id') != task_id or task.get('base_url') != api.client.base_url:
                 continue
-            if task.get('state') not in ('completed', 'failed', 'cancelled', 'interrupted_by_restart') or task.get('prompt_id') in active:
+            if (task.get('state') not in ('completed', 'failed', 'cancelled', 'interrupted_by_restart')
+                    or task.get('prompt_id') in active or result_pin(directory).exists()):
                 continue
             # Keep completed jobs that have not yet been downloaded.
             if task['state'] == 'completed' and not read_json(directory / 'result.json').get('outputs'):

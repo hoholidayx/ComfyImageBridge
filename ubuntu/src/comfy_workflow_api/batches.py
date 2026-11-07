@@ -3,7 +3,7 @@ import copy
 import re
 import uuid
 from .contract import normalize
-from .metadata import metadata
+from .metadata import backend_metadata
 from .storage import now, read_json, write_json
 
 
@@ -28,7 +28,7 @@ def submit(api, alias, request, count=1):
     folder.mkdir(parents=True)
     batch = {'task_id': task_id, 'workflow': alias, 'state': 'submitting', 'count': count,
              'created_at': now(), 'children': [], 'request_used': effective,
-             'seed_used': effective['seed'], 'metadata': metadata(api.root)}
+             'seed_used': effective['seed'], 'metadata': backend_metadata()}
     write_json(folder/'batch.json', batch)
     for index in range(count):
         child_request = {**copy.deepcopy(effective), 'seed': effective['seed'] + index}
@@ -94,7 +94,7 @@ def fetch(api, task_id):
             child['snapshot'] = result['snapshot']
             for output in result['outputs']:
                 outputs.append({**output, 'seed_used': child['seed_used'], 'child_task_id': child['task_id']})
-    batch.update(outputs=outputs, metadata=metadata(api.root), cleanup={'max_tasks': api.settings['retention']['max_tasks']})
+    batch.update(outputs=outputs, metadata=backend_metadata(), cleanup={'max_tasks': api.settings['retention']['max_tasks']})
     write_json(directory(api, task_id)/'result.json', batch)
     return batch
 

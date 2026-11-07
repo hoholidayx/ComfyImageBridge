@@ -93,7 +93,13 @@ def main():
         meta.update(client=client, stale_copy=stale)
         if stale and packet['operation'] == 'submit':
             raise ValueError('stale_copy: installed plugin differs from the Ubuntu client release manifest; update plugin and open a new Hermes session before submitting')
-        print(json.dumps({'ok': True, 'result': invoke(packet), 'metadata': meta}, ensure_ascii=False))
+        result = invoke(packet)
+        client_fields = {key: meta[key] for key in (
+            'expected_plugin_version', 'expected_plugin_hash', 'client_contract_error')}
+        for value in (result, result.get('workflows', {})):
+            if isinstance(value.get('metadata'), dict):
+                value['metadata'] = {**value['metadata'], **client_fields}
+        print(json.dumps({'ok': True, 'result': result, 'metadata': meta}, ensure_ascii=False))
     except Exception as exc:
         error = {'type': type(exc).__name__, 'message': str(exc), 'retry_submission': False}
         match = re.search(r'Task ([0-9a-f-]{36}):', str(exc))

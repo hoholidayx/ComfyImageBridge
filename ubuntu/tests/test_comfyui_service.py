@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -51,7 +52,8 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(set(observed), {'pyproject.toml', 'uv.lock', 'run_script'})
 
     def test_identity_checks_boot_before_legacy_compatibility(self):
-        with patch.object(service, 'boot_id', return_value='new-boot'), patch.object(service, 'matches', return_value=True):
+        with patch.object(service.service_readiness, 'boot_id', return_value='new-boot'), \
+             patch.object(service.service_readiness, 'matches', return_value=True):
             self.assertFalse(service.process_matches(self.root))
 
     def test_complete_listener_inventory_retains_unknown_owner_and_ignores_timewait(self):
@@ -62,7 +64,7 @@ class ServiceTest(unittest.TestCase):
         (proc/'net/tcp').write_text(header+row('0A','900')+row('06','901'))
         (proc/'net/tcp6').write_text(header)
         factory = lambda value: proc/str(value)[len('/proc/'): ] if str(value).startswith('/proc/') else proc if str(value)=='/proc' else Path(value)
-        with patch.object(service, 'Path', side_effect=factory):
+        with patch.object(service.service_readiness, 'Path', side_effect=factory):
             inventory = service.listeners()
         self.assertEqual([v['inode'] for v in inventory], ['900'])
         self.assertEqual(inventory[0]['owners'], [])
@@ -129,6 +131,26 @@ class ServiceTest(unittest.TestCase):
 
     def test_unknown_ownership_prevents_verified_readiness(self):
         self.assertFalse(self.verified_status(owners=False)['ready'])
+
+    def test_image_admission_requires_current_owned_comfyui_listener(self):
+        probe = service.service_readiness
+        base_url = 'http://127.0.0.1:8188'
+        api = SimpleNamespace(root=self.data, data=self.data, settings={'base_url': base_url},
+                              client=SimpleNamespace(base_url=base_url))
+        state = {**self.state, 'verification': {
+            'success': True, 'service_instance_id': 'instance', 'resume_id': 'boot:1',
+            'workflow_hash': 'hash',
+        }}
+        service.write_json(self.data/'comfyui-service/state.json', state)
+        with patch.object(probe, 'resume_evidence', return_value={'resume_id': 'boot:1'}), \
+             patch.object(probe, 'workflow_hash', return_value='hash'), \
+             patch.object(probe, 'known_members', return_value={123: self.root}), \
+             patch.object(probe, 'listeners', return_value=[{'owners': [self.child]}]), \
+             patch.object(probe, 'owned_owner', side_effect=[True, False]), \
+             patch.object(probe, 'health', return_value={'http_healthy': True}) as health:
+            self.assertEqual(probe.ready_instance(api), 'instance')
+            self.assertIsNone(probe.ready_instance(api))
+        health.assert_called_once()
 
     def test_resume_clock_jitter_is_tolerated_but_unknown_is_not_proof(self):
         self.assertTrue(service.same_resume('boot:1.00', 'boot:1.01'))

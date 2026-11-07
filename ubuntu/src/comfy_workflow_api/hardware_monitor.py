@@ -85,7 +85,8 @@ def _valid_cc_address(value):
         return False
     try:
         address = Address(addr_spec=value)
-    except (ValueError, TypeError, HeaderParseError):
+    except (ValueError, TypeError, HeaderParseError, IndexError):
+        # Python 3.12.3 can raise IndexError for a missing domain after @.
         return False
     if (not address.username or len(address.username) > 64 or not address.domain
             or len(address.domain) > 253 or address.addr_spec != value):

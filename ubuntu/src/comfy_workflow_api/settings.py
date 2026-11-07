@@ -1,8 +1,28 @@
 """Checkout configuration shared by the SDK and lifecycle scripts."""
+from ipaddress import IPv4Address, IPv4Network
 import os
 from pathlib import Path
 import shutil
 import tomllib
+
+
+_PRIVATE_NETWORKS = tuple(map(IPv4Network, ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')))
+
+
+def mcp_listen(settings):
+    config = settings.get('mcp', {})
+    if not isinstance(config, dict):
+        raise ValueError('mcp must be a configuration table')
+    host, port = config.get('host', '127.0.0.1'), config.get('port', 8787)
+    try:
+        address = IPv4Address(host) if isinstance(host, str) else None
+    except ValueError:
+        address = None
+    if address is None or not (address.is_loopback or any(address in network for network in _PRIVATE_NETWORKS)):
+        raise ValueError('mcp.host must be an explicit loopback or private LAN IPv4 address')
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError('mcp.port must be an integer from 1 to 65535')
+    return str(address), port
 
 
 def module_root(root=None):

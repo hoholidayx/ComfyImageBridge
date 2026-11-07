@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify both packages and their release contract without contacting live services."""
+"""Verify the Ubuntu MCP release and the frozen Hermes rollback offline."""
 import argparse
 import os
 from pathlib import Path
@@ -24,7 +24,8 @@ def main():
     offline = ["--offline"] if args.offline else []
     for package in ("ubuntu", "hermes"):
         print(f"Checking {package}: locked environment and offline unit tests", flush=True)
-        subprocess.run([uv, "sync", "--project", str(root / package), "--locked", *offline], check=True)
+        extras = ["--extra", "mcp"] if package == "ubuntu" else []
+        subprocess.run([uv, "sync", "--project", str(root / package), "--locked", *extras, *offline], check=True)
         subprocess.run([uv, "run", "--project", str(root / package), "--no-sync", *offline,
                         "python", str(root / package / "scripts/check.py")], cwd=root, check=True)
     environment = dict(os.environ)

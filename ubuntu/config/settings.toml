@@ -4,6 +4,12 @@ request_timeout = 60
 poll_interval = 1
 wait_timeout = 1200
 
+[mcp]
+# Set an explicit trusted LAN IPv4 address to allow remote clients.
+host = "127.0.0.1"
+port = 8787
+max_pending_tasks = 8
+
 [service]
 comfy_dir = "~/workspace/ComfyUI"
 run_script = "run_comfyui.sh"

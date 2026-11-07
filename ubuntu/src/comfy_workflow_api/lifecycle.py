@@ -8,6 +8,10 @@ from .storage import now, read_json, write_json
 ANY_EPOCH = object()
 
 
+class BackendUnavailable(RuntimeError):
+    """The managed service cannot accept a new generation."""
+
+
 def service_state(api):
     path = api.data/'comfyui-service/state.json'
     try:
@@ -34,7 +38,7 @@ def retired(api, service_instance_id):
 
 
 @contextmanager
-def submission(api, task_id, operation_id):
+def submission(api, task_id, operation_id, readiness=None):
     from .sleep_guard import identity
     folder = api.data/'comfyui-service'
     folder.mkdir(parents=True, exist_ok=True)
@@ -47,8 +51,10 @@ def submission(api, task_id, operation_id):
         if gate.exists():
             value = read_json(gate)
             if value.get('blocked', True):
-                raise RuntimeError(f"Service management in progress ({value.get('operation_id', 'unknown')}); no generation submitted")
+                raise BackendUnavailable(f"Service management in progress ({value.get('operation_id', 'unknown')}); no generation submitted")
         service_instance_id = instance_id(api)
+        if readiness is not None and not readiness(service_instance_id):
+            raise BackendUnavailable('Managed ComfyUI render readiness is unavailable')
         write_json(reservation, {'operation_id': operation_id, 'task_id': task_id,
             'owner': identity(os.getpid()), 'created_at': now(), 'service_instance_id': service_instance_id})
     try:

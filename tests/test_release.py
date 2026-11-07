@@ -33,12 +33,19 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(client_contract(ROOT / "ubuntu", plugin), {**item, "error": None})
 
     def test_versions_and_dependency_boundary(self):
-        for package in ("ubuntu", "hermes"):
+        for package, version in (("ubuntu", VERSION), ("hermes", "0.7.2")):
             project = tomllib.loads((ROOT / package / "pyproject.toml").read_text())["project"]
-            self.assertEqual(project["version"], VERSION)
+            self.assertEqual(project["version"], version)
             self.assertEqual(project["dependencies"], [])
             lock = tomllib.loads((ROOT / package / "uv.lock").read_text())
-            self.assertEqual([p["name"] for p in lock["package"]], [project["name"]])
+            locked = {p["name"]: p for p in lock["package"]}
+            self.assertEqual(locked[project["name"]]["version"], version)
+            if package == "hermes":
+                self.assertEqual(set(locked), {project["name"]})
+            else:
+                self.assertIn("mcp", locked)
+                self.assertIn("mcp", project["optional-dependencies"])
+                self.assertTrue({"torch", "pytorch", "rocm", "comfyui"}.isdisjoint(locked))
 
     def test_clients_only_bootstrap_installed_server_modules(self):
         for plugin, module in (("comfy-workflows", "workflow_bridge"), ("ubuntu-runtime", "runtime_bridge")):

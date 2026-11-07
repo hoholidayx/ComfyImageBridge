@@ -1,5 +1,9 @@
 # 故障排查
 
+MCP 部署及工具错误见 [MCP 接入](mcp.md)。先用 `scripts/mcp-service.sh status` 和 `/healthz` 检查 MCP 进程，再单独用 `scripts/comfyui-service.sh status` 检查渲染就绪。对于提交结果不确定的任务，框架继续用原任务 ID 查询。
+
+以下涉及插件、profile 或 SSH 生图的条目供 Hermes 回退使用。
+
 ## 工具没有出现
 
 先确认 profile、两个插件是否启用、工具集是否允许、插件加载是否报错，再检查当前会话冻结的工具目录。工具历史裁剪不会删除已注册插件；旧会话 pin、延迟发现和模型没有调用工具是不同问题。兼容核心可以让 `comfy_image` 常驻；不会把全部 Ubuntu 管理工具都塞进模型前缀。

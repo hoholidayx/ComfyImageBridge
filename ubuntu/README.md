@@ -1,6 +1,6 @@
 # Ubuntu：ComfyUI 工作流 SDK 与运行管理
 
-这是运行在 ComfyUI 同一台 Ubuntu 主机上的独立包。提供标准库 HTTP 客户端、Python SDK、JSON CLI、工作流编译器、任务记录、数量清理、防睡眠和安全的服务管理。Hermes 客户端位于仓库的 [`../hermes/`](../hermes/)；远程执行逻辑由本包持有，客户端只通过 SSH 调用。
+这是运行在 ComfyUI 同一台 Ubuntu 主机上的独立包。提供可选的内网 MCP 生图服务，以及 Python SDK、JSON CLI、工作流编译器、任务记录、数量清理、防睡眠和独立服务管理。接入自研框架时按 [MCP 部署与工具契约](../docs/mcp.md) 安装可选依赖。旧 [Hermes 插件](../hermes/) 与 SSH 桥留作回退。
 
 本包不安装 PyTorch、ROCm 或 ComfyUI，不复制模型、用户图片、历史任务、原机启动脚本，也不新增 HTTP 常驻服务。
 
@@ -64,7 +64,7 @@ uv run comfy-workflow sync-workflows
 
 `prompt` 必填，最多 8000 字符，超限报错；直接使用本 SDK/CLI 时 `seed` 默认固定 0，不随机，范围为无符号 64 位整数。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
 
-**Qwen Image 2.1 编辑重要约束：生成图再次作为参考图 edit 时，应避免复用参考图生成时的 seed。** 当前模型配置的合成图交叉对照已复现同源 seed 的纹理劣化，不泛化为所有模型的通病。Hermes 客户端 edit 默认随机，并通过本机 hash/seed 索引自动替换已知冲突；SDK/CLI 与手动 ComfyUI 不使用该客户端索引，调用者应自行选择新 seed。文生图默认仍为0。
+**Qwen Image 2.1 编辑重要约束：生成图再次作为参考图 edit 时，应避免复用参考图生成时的 seed。** 当前模型配置的合成图交叉对照已复现同源 seed 的纹理劣化。MCP 使用 Ubuntu 端的 SHA-256 来源索引自动避开已知冲突，Hermes 回退路径沿用其 profile 索引。直接调用 SDK / CLI 或手动使用 ComfyUI 时，请自行选择新 seed。文生图默认 seed 为 0。
 
 尺寸用 `output_size` 表达：
 

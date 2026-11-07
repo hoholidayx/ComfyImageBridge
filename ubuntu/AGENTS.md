@@ -1,5 +1,6 @@
 # Ubuntu 端维护约定
 
+- MCP 只提供生图提交、状态和取图。监听指定可信内网地址，校验 Host 和 Origin。启动、唤醒和恢复由独立运维入口负责，MCP 仅做只读就绪检查。
 - ComfyUI 通过 `config/settings.toml` 的 `service.run_script` 启动；默认是 `service.comfy_dir` 下的 `run_comfyui.sh`。运行前先读脚本实时内容，保留其中 HSA、MIOpen、uv 及其他设备配置。
 - 不得绕过原脚本直接执行 `python main.py`，不得修改 ComfyUI 的 uv.lock 或受保护的 PyTorch、ROCm 依赖。SDK 使用自己的 uv 环境，不需要这些依赖。
 - 原启动脚本不一定有 stop/restart 参数，不得虚构。管理操作使用本包 `scripts/comfyui-service.sh`，先核实进程归属与启动标识，禁止按进程名批量结束。

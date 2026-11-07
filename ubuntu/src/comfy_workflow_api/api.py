@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import copy
 import hashlib
 import json
@@ -11,13 +12,17 @@ from pathlib import Path
 from .client import APIError, Client, png_size
 from .compiler import WORKFLOWS, compile_graph, digest, topology
 from .storage import now, read_json, write_json
-from .retention import cleanup as cleanup_tasks, cleanup_lock
+from .retention import cleanup as cleanup_tasks, cleanup_lock, result_pin
 from .contract import normalize
-from .metadata import metadata
+from .metadata import backend_metadata
 from .sampling import configuration as sampling_configuration
 from . import sleep_guard, lifecycle
 from .task_diagnostics import TERMINAL, decorate
 from .settings import load_settings, module_root
+
+
+class OutputUnavailable(RuntimeError):
+    """A completed workflow produced no saved image to fetch."""
 
 
 class WorkflowAPI:
@@ -33,7 +38,7 @@ class WorkflowAPI:
 
     def list_workflows(self):
         manifest = self.root / "workflows/manifest.json"
-        return {"registered": WORKFLOWS, "snapshots": read_json(manifest) if manifest.exists() else {}, 'metadata': metadata(self.root)}
+        return {"registered": WORKFLOWS, "snapshots": read_json(manifest) if manifest.exists() else {}, 'metadata': backend_metadata()}
 
     def sync_workflows(self):
         """Fetch explicitly; only accept the topology verified with these adapters."""
@@ -91,7 +96,7 @@ class WorkflowAPI:
         with (directory / "task.log").open("a") as stream:
             stream.write(json.dumps({"time": now(), "state": state["state"], "message": message}, ensure_ascii=False) + "\n")
 
-    def submit(self, workflow, request, request_dir=None):
+    def submit(self, workflow, request, request_dir=None, *, task_id=None, readiness=None, before_prompt=None):
         snapshot, manifest = self._snapshot(workflow)
         original_request = copy.deepcopy(request)
         request = normalize(self._request(request, request_dir), workflow)
@@ -99,21 +104,24 @@ class WorkflowAPI:
         if workflow.endswith('edit'):
             request.setdefault('reference_resolution', 1024)
         compile_graph(workflow, snapshot, request)  # validate before copying or uploading
-        task_id, operation_id = str(uuid.uuid4()), str(uuid.uuid4())
-        with lifecycle.submission(self, task_id, operation_id) as service_instance_id:
+        task_id, operation_id = task_id or str(uuid.uuid4()), str(uuid.uuid4())
+        self._directory(task_id)  # validate a caller-reserved ID before writing admission state
+        with lifecycle.submission(self, task_id, operation_id, readiness) as service_instance_id:
             with sleep_guard.hold(self, operation_id=operation_id, task_id=task_id,
                                   service_instance_id=service_instance_id, purpose='submit'):
                 return self._submit_prepared(workflow, request, snapshot, manifest, original_request,
-                                             task_id=task_id, service_instance_id=service_instance_id)
+                                             task_id=task_id, service_instance_id=service_instance_id,
+                                             before_prompt=before_prompt)
 
-    def _submit_prepared(self, workflow, request, snapshot, manifest, original_request, task_id=None, service_instance_id=None):
+    def _submit_prepared(self, workflow, request, snapshot, manifest, original_request, task_id=None,
+                         service_instance_id=None, before_prompt=None):
         task_id = task_id or str(uuid.uuid4())
         directory = self._directory(task_id)
         directory.mkdir(parents=True, exist_ok=False)
         state = {"task_id": task_id, "workflow": workflow, "snapshot": manifest,
                  "state": "preparing", "created_at": now(), "prompt_id": None,
                  "service_instance_id": service_instance_id, "last_progress_at": now(),
-                 "base_url": self.client.base_url, 'request_used': request, 'seed_used': request['seed'], 'metadata': metadata(self.root)}
+                 "base_url": self.client.base_url, 'request_used': request, 'seed_used': request['seed'], 'metadata': backend_metadata()}
         write_json(directory / 'original-request.json', original_request)
         write_json(directory / "request.json", request)
         write_json(directory / "source-workflow.json", snapshot)
@@ -147,6 +155,8 @@ class WorkflowAPI:
             write_json(directory / "submission.json", {"prompt_id": state["prompt_id"], "acknowledged": False})
             self._save(directory, state, "Submitting once; UUID persisted before POST")
             sleep_guard.ticket(self, task_id)
+            if before_prompt is not None:
+                before_prompt(state['prompt_id'])
             result = self.client.request("/prompt", "POST", {"prompt": graph,
                         "client_id": task_id, "prompt_id": state["prompt_id"]})
             write_json(directory / "submission.json", {**result, "acknowledged": True})
@@ -166,6 +176,27 @@ class WorkflowAPI:
             if isinstance(exc, APIError):
                 write_json(directory / "submission-error.json", {"status": exc.status, "body": exc.body})
             raise RuntimeError(f"Task {task_id}: {state['state']}: {exc}") from exc
+
+    def abandon_unsubmitted(self, task_id):
+        """Close a prepared run when the caller's durable journal proves no POST was attempted."""
+        directory = self._directory(task_id)
+        try:
+            state = read_json(directory / 'task.json')
+        except FileNotFoundError:
+            return
+        if state['state'] not in ('preparing', 'submitting'):
+            return
+        state.update(state='failed', ended_at=now(), error='Worker stopped before dispatch')
+        self._save(directory, state, 'Abandoned before dispatch')
+        sleep_guard.ticket(self, task_id, remove=True)
+
+    def pin_result(self, task_id, pinned):
+        """Keep this run outside count-based cleanup until its consumer archives it."""
+        marker = result_pin(self._directory(task_id))
+        if pinned:
+            marker.touch(mode=0o600)
+        else:
+            marker.unlink(missing_ok=True)
 
     def status(self, task_id):
         directory = self._directory(task_id)
@@ -291,8 +322,15 @@ class WorkflowAPI:
             time.sleep(self.settings["poll_interval"])
 
     def fetch(self, task_id):
+        with self.fetched(task_id) as result:
+            return result
+
+    @contextmanager
+    def fetched(self, task_id, *, reuse_saved=False):
+        """Keep verified output files protected while a caller materializes its result."""
         with sleep_guard.hold(self, task_id=task_id, service_instance_id=lifecycle.instance_id(self), purpose="fetch"), cleanup_lock(self.data):
-            result = self._fetch(task_id)
+            saved = read_json(self._directory(task_id) / 'result.json') if reuse_saved else {}
+            result = saved if saved.get('outputs') else self._fetch(task_id)
             if self.settings.get('retention', {}).get('auto_cleanup', False):
                 try:
                     result['cleanup'] = cleanup_tasks(self, protect_task=task_id)
@@ -301,7 +339,7 @@ class WorkflowAPI:
                     result['cleanup'] = {'error': str(exc)}
                     with (self.data / 'cleanup.log').open('a') as stream:
                         stream.write(json.dumps({'time': now(), 'error': str(exc)}) + '\n')
-            return result
+            yield result
 
     def cleanup(self, dry_run=False):
         with cleanup_lock(self.data):
@@ -329,7 +367,7 @@ class WorkflowAPI:
             outputs.append({"path": str(path), "width": size[0], "height": size[1],
                             "sha256": hashlib.sha256(data).hexdigest(), "server_file": query})
         if not outputs:
-            raise RuntimeError("Completed task has no saved PNG output")
+            raise OutputUnavailable("Completed task has no saved PNG output")
         from datetime import datetime
         elapsed = (datetime.fromisoformat(state["completed_at"]) - datetime.fromisoformat(state["submitted_at"])).total_seconds()
         result = {"task_id": task_id, "prompt_id": state["prompt_id"], "workflow": state["workflow"],
@@ -341,7 +379,7 @@ class WorkflowAPI:
             sampling = ({'seed': inputs['noise_seed'], 'steps': len(graph['pruna_sigmas']['inputs']['nodes'].split(',')), 'cfg': inputs['cfg']}
                         if graph['458']['class_type'] == 'SamplerCustom' else {key: inputs[key] for key in ('seed', 'steps', 'cfg')})
             effective = {**read_json(directory/'request.json'), **sampling}
-        result.update(request_used=effective, seed_used=effective['seed'], metadata=metadata(self.root), model_config=state.get('model_config'))
+        result.update(request_used=effective, seed_used=effective['seed'], metadata=backend_metadata(), model_config=state.get('model_config'))
         result['sampling_config'] = state.get('sampling_config')
         for output in outputs:
             output['seed_used'] = effective['seed']

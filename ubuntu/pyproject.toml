@@ -1,12 +1,16 @@
 [project]
 name = "comfy-workflow-api"
-version = "0.7.2"
+version = "0.8.0"
 description = "Standalone SDK and CLI for saved ComfyUI workflows"
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3", "Pillow>=11.3", "pydantic>=2.12", "starlette>=0.27", "uvicorn>=0.31.1"]
+
 [project.scripts]
 comfy-workflow = "comfy_workflow_api.cli:main"
+comfy-image-mcp = "comfy_workflow_api.mcp_server:main"
 
 [build-system]
 requires = ["hatchling>=1.26,<2"]

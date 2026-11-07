@@ -30,10 +30,14 @@ def client_contract(root, plugin='comfy-workflows'):
         return {'version': None, 'hash': None, 'error': f'Client release manifest unavailable: {exc}'}
 
 
+def backend_metadata():
+    return {'backend_version': VERSION, 'contract_version': CONTRACT_VERSION,
+            'backend_hash': tree_hash(Path(__file__).parent)}
+
+
 def metadata(root):
     expected = client_contract(root)
-    return {'backend_version': VERSION, 'contract_version': CONTRACT_VERSION,
-            'backend_hash': tree_hash(Path(__file__).parent),
+    return {**backend_metadata(),
             'expected_plugin_version': expected['version'],
             'expected_plugin_hash': expected['hash'],
             'client_contract_error': expected['error']}

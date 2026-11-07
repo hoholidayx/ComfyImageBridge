@@ -16,12 +16,13 @@
 | `retention.max_tasks` | 100；清理模块管理的旧任务及其专用产物 |
 | `retention.comfy_input_dir` / `comfy_output_dir` | 默认从 ComfyUI 根目录推导 `input/comfy-workflow-api`、`output/comfy-workflow-api` |
 | `sleep_guard` | 默认开启，空闲宽限期 10 秒；需要可用 GNOME 用户会话 |
+| `mcp.host` / `mcp.port` | 默认 `127.0.0.1:8787`。跨机访问时显式填写 Ubuntu 的可信内网 IPv4，见 [MCP 部署](mcp.md) |
 
 配置文件本身不含密钥。实际主机的配置应单独备份，升级时人工合并新增键，避免覆盖。`COMFY_WORKFLOW_HOME` 可指定模块根目录；脚本与 SDK 必须指向同一根目录，以免使用不同数据和状态文件。
 
 ComfyUI 的 uv 环境与本模块 `.venv` 相互独立。管理脚本会检查原启动脚本及受保护环境；原脚本需要改变依赖时应停止并诊断，不能改用裸 `python main.py` 绕过。启动参数、HSA/MIOpen 设置继续属于原脚本。
 
-## Hermes
+## Hermes 回退配置
 
 模板位于 [`hermes/config/config.example.yaml`](../hermes/config/config.example.yaml)。配置合并到实际使用的 profile，两个插件填写相同的 SSH、远端目录与 LAN 参数：
 
@@ -46,8 +47,8 @@ SSH 使用现有私钥和 known_hosts；先手工建立可信连接。网络唤�
 
 没有这些 API 时，应先核对兼容性和诊断结果，不能承诺任意上游版本即装即用；不要为修兼容性关闭会话隔离或把凭据写入工具参数。本仓库不包含 Hermes 核心补丁。
 
-## 版本契约
+## 旧 SSH 版本契约
 
-`ubuntu/config/client-contract.json` 是这一发行版本应接受的客户端版本/hash。它由两个插件根目录的 Python 文件及 `plugin.yaml` 生成，与运行时现有 hash 算法一致；不是覆盖任意文件的签名或供应链认证。
+`ubuntu/config/client-contract.json` 记录旧 SSH 桥接受的客户端版本与 hash。它由两个插件根目录的 Python 文件及 `plugin.yaml` 生成。MCP 使用独立的工具契约。
 
 发布运行代码变更后重新导出，客户端与 Ubuntu 包一起更新。服务端不再依赖客户端源码副本来检查版本。缺失或无效的 manifest 会报告错误并阻止新的生成提交；现有任务的查询/诊断按接口自身规则保留。
