@@ -18,6 +18,7 @@ import time
 import uuid
 
 from .scope import BASE_FIELDS, LOCAL_PLATFORMS, SESSION_FIELDS, require_scope, scope_matches
+from . import seed_guard
 
 
 TERMINAL = frozenset({'completed', 'partial', 'failed', 'cancelled', 'interrupted_by_restart'})
@@ -32,6 +33,22 @@ CONFIG_DEFAULTS = {
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def seed_notice(policy):
+    if not policy:
+        return ''
+    selected = policy['selected_seed']
+    if policy['reason'] == 'reference_seed_conflict':
+        text = (f"参考图 seed 冲突：请求 {policy['requested_seed']}，已自动改为 {selected}。"
+                if policy['requested_seed'] is not None else f'为避开参考图生成 seed，已自动选用 {selected}。')
+    elif policy['reason'] == 'edit_random':
+        text = f'本次 edit 使用新随机 seed：{selected}。'
+    else:
+        text = f'本次 edit 实际 seed：{selected}。'
+    if policy['unknown_reference_count']:
+        text += f" {policy['unknown_reference_count']} 张参考图来源未知，无法核实其生成 seed。"
+    return text
 
 
 def atomic_json(path, value):
@@ -102,6 +119,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS outbox(event_id TEXT PRIMARY KEY, task_id TEXT, state TEXT, created_at TEXT, body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS actions(token TEXT PRIMARY KEY, task_id TEXT, expires_at REAL, consumed_at REAL, body TEXT NOT NULL);
             ''')
+            seed_guard.initialize(db)
+            if not db.in_transaction:
+                db.execute('BEGIN IMMEDIATE')
+            seed_guard.migrate(db, self.root)
 
     @contextmanager
     def connection(self):
@@ -204,19 +225,69 @@ class Store:
             prior = {json.loads(row[0]).get('output_index'): json.loads(row[0]) for row in
                      db.execute('SELECT body FROM artifacts WHERE task_id=?', (task_id,))}
             for index, output in enumerate(outputs):
+                actual_seed = output.get('seed_used')
+                if actual_seed is None and job['request'].get('count', 1) == 1:
+                    actual_seed = job['request']['seed']
+                self.register_provenance(db, output, actual_seed)
                 if index in prior:
                     registered.append(prior[index])
                     continue
                 value = {key: output[key] for key in ('path', 'width', 'height', 'sha256', 'remote_path', 'seed_used') if key in output}
                 value.update(task_id=task_id, output_index=index, title=job['title'], title_source=job['request']['title_source'],
                              origin=job['origin'], preset=job['request']['preset'],
-                             seed_used=output.get('seed_used', job['request']['seed'] + index),
+                             seed_used=actual_seed,
+                             seed_policy=job.get('seed_policy'),
                              reference_ids=job.get('reference_ids', []), created_at=now(), expired=False)
                 cursor = db.execute('INSERT INTO artifacts(task_id,body) VALUES(?,?)', (task_id, '{}'))
                 value['image_id'] = f'img_{cursor.lastrowid:06d}'
                 db.execute('UPDATE artifacts SET body=? WHERE id=?', (json.dumps(value, ensure_ascii=False), cursor.lastrowid))
                 registered.append(value)
         return registered
+
+    @staticmethod
+    def register_provenance(db, output, seed):
+        """Retain generation identities independently of image-file retention."""
+        if seed is None:
+            return
+        path = Path(output['path'])
+        expected = output.get('sha256')
+        if path.is_file():
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if expected and actual != expected:
+                raise ValueError('Output changed before provenance registration')
+        else:
+            actual = expected
+        if actual:
+            seed_guard.register(db, {'file_sha256': actual}, seed)
+
+    def prepare_seed_inputs(self, task_id):
+        """Recheck immutable input copies before any remote preparation/submission."""
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT body FROM jobs WHERE task_id=?', (task_id,)).fetchone()
+            if row is None:
+                raise ValueError('Unknown local task ID')
+            job = json.loads(row[0])
+            if job.get('submission_attempted') or not job.get('input_paths'):
+                return False
+            identities = [seed_guard.fingerprint(Path(p).read_bytes()) for p in job['input_paths']]
+            old = job.get('input_fingerprints')
+            if old and [v['file_sha256'] for v in old] != [v['file_sha256'] for v in identities]:
+                raise ValueError('Copied reference image changed; no task submitted')
+            previous = job.get('seed_policy')
+            raw = self.directory(task_id)/'request.json'
+            requested = previous['requested_seed'] if previous else (
+                json.loads(raw.read_text()).get('seed') if raw.is_file() else job['request']['seed'])
+            policy = seed_guard.select_seed(db, identities, requested, job['request']['count'],
+                                            candidate_seed=job['request']['seed'] if previous else None)
+            changed = policy['selected_seed'] != job['request']['seed']
+            if previous and not changed:
+                policy['reason'] = previous['reason']
+            job.update(input_fingerprints=identities, seed_policy=policy, updated_at=now())
+            job['request']['seed'] = policy['selected_seed']
+            db.execute('UPDATE jobs SET body=? WHERE task_id=?', (json.dumps(job, ensure_ascii=False), task_id))
+        atomic_json(self.directory(task_id)/'receipt.json', job)
+        return changed
 
     def reconcile_retention(self, max_jobs=100):
         """Keep tombstone titles, but bound copied inputs of finished local jobs too."""
@@ -377,7 +448,7 @@ class JobService:
         task_id = str(uuid.uuid4())
         directory = self.store.directory(task_id)
         directory.mkdir(parents=True, exist_ok=False)
-        paths, references, total = [], [], 0
+        paths, references, identities, total = [], [], [], 0
         try:
             for index, reference in enumerate(request['images'], 1):
                 if reference.startswith('img_'):
@@ -396,13 +467,6 @@ class JobService:
                 data = path.read_bytes()
                 if len(data) > 20 * 1024**2 or len(data) < 24 or data[:8] != b'\x89PNG\r\n\x1a\n' or data[12:16] != b'IHDR' or not all(struct.unpack('>II', data[16:24])):
                     raise ValueError('Invalid input PNG header')
-                if index == 1 and request['size'] == 'auto':
-                    width, height = struct.unpack('>II', data[16:24])
-                    if any(not 64 <= value <= 2048 or value % 32 for value in (width, height)):
-                        raise ValueError('auto requires the original first image width/height to be 64..2048 and multiples of 32; choose an explicit size or aspect ratio')
-                    # The saved edit template's follow_image observes its resized
-                    # reference, so freeze original dimensions before preprocessing.
-                    request['output_size'] = {'mode': 'explicit', 'width': width, 'height': height}
                 total += len(data)
                 if total > 100 * 1024**2:
                     raise ValueError('Combined inputs exceed 100 MiB')
@@ -410,12 +474,19 @@ class JobService:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(data)
                 paths.append(str(destination))
+                identities.append(seed_guard.fingerprint(data))
+            policy = None
+            if paths:
+                with self.store.connection() as db:
+                    policy = seed_guard.select_seed(db, identities, args.get('seed'), request['count'])
+                request['seed'] = policy['selected_seed']
             config = {key: self.ctx.get_config(key, default) for key, default in CONFIG_DEFAULTS.items()}
             atomic_json(directory / 'request.json', args)
             atomic_json(directory / 'config.json', config)
             job = {'task_id': task_id, 'created_at': now(), 'updated_at': now(), 'state': 'accepted',
                    'stage': 'accepted', 'title': request['title'], 'origin': dict(origin), 'request': request,
                    'input_paths': paths, 'reference_ids': references, 'submission_attempted': False,
+                   'input_fingerprints': identities, 'seed_policy': policy,
                    'remote_task_id': None, 'cancel_requested': False, 'artifacts': []}
             if retry_of:
                 job.update(retry_of=retry_of, reference_ids=reference_ids or [])
@@ -442,6 +513,7 @@ class JobService:
         elapsed_until = datetime.fromisoformat(completed_at).timestamp() if completed_at else time.time()
         result = {'success': True, 'task_id': task_id, 'state': job['state'], 'stage': job.get('stage'),
                 'title': job['title'], 'preset': job['request']['preset'], 'seed_used': job['request']['seed'],
+                'seed_policy': job.get('seed_policy'),
                 'count': job['request']['count'], 'artifacts': artifacts, 'worker_running': matches(job.get('worker')),
                 'elapsed_seconds': round(max(0, elapsed_until-datetime.fromisoformat(job['created_at']).timestamp()), 3),
                 'remote_task_id': job.get('remote_task_id'), 'error': job.get('error'),

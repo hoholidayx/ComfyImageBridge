@@ -250,28 +250,36 @@ class JobTest(unittest.TestCase):
             row = db.execute('SELECT body FROM outbox WHERE event_id=?', (event_id,)).fetchone()
         return json.loads(row[0])
 
-    def test_edit_auto_submits_original_first_image_size_before_reference_resize(self):
+    def test_edit_auto_preserves_follow_image_through_worker_submission(self):
         source = self.root/'original-512.png'
         source.write_bytes(png(512, 512))
         task_id = self.create({'prompt': 'change robot color', 'images': [str(source)], 'size': 'auto'})
         job = self.store.get_job(task_id)
         self.assertEqual(job['request']['size'], 'auto')
-        self.assertEqual(job['request']['output_size'], {'mode': 'explicit', 'width': 512, 'height': 512})
+        self.assertEqual(job['request']['output_size'], {'mode': 'follow_image'})
         self.assertEqual(json.loads((self.store.directory(task_id)/'request.json').read_text())['size'], 'auto')
         transport = FakeTransport(self.root, [{'success': True, 'result': {'task_id': str(uuid.uuid4()), 'state': 'queued'}}])
         runner = Runner(self.store, task_id, transport=transport, runtime=Runtime())
         self.assertTrue(runner.submit())
-        self.assertEqual(transport.calls[0]['request']['output_size'], {'mode': 'explicit', 'width': 512, 'height': 512})
+        self.assertEqual(transport.calls[0]['request']['output_size'], {'mode': 'follow_image'})
         self.assertNotIn('reference_resolution', transport.calls[0]['request'])
 
-    def test_edit_auto_rejects_unsupported_original_dimensions_with_size_guidance(self):
+    def test_edit_auto_leaves_source_resizing_and_alignment_to_backend(self):
         for width, height in ((32, 64), (70, 64), (2080, 64)):
             source = self.root/f'{width}x{height}.png'
             source.write_bytes(png(width, height))
-            with self.assertRaisesRegex(ValueError, 'choose an explicit size or aspect ratio'):
-                self.create({'prompt': 'edit robot', 'images': [str(source)], 'size': 'auto'})
-        task_id = self.create({'prompt': 'edit robot', 'images': [str(source)], 'size': '512x512'})
-        self.assertEqual(self.store.get_job(task_id)['request']['output_size']['width'], 512)
+            with self.subTest(width=width, height=height):
+                task_id = self.create({'prompt': 'edit robot', 'images': [str(source)], 'size': 'auto'})
+                self.assertEqual(self.store.get_job(task_id)['request']['output_size'], {'mode': 'follow_image'})
+
+    def test_edit_requested_size_is_preserved(self):
+        source = self.root/'reference.png'
+        source.write_bytes(png(70, 64))
+        for size, expected in (('512x512', {'mode': 'explicit', 'width': 512, 'height': 512}),
+                               ('9:16', {'mode': 'aspect_ratio', 'aspect_ratio': '9:16', 'megapixels': 1, 'multiple': 32})):
+            with self.subTest(size=size):
+                task_id = self.create({'prompt': 'edit robot', 'images': [str(source)], 'size': size})
+                self.assertEqual(self.store.get_job(task_id)['request']['output_size'], expected)
 
     def test_outbox_claim_and_uncertain_recovery(self):
         task_id = self.create()
@@ -460,7 +468,7 @@ class JobTest(unittest.TestCase):
         # real OS process/session behavior without any network, WoL or GPU work.
         copied = self.root/'fixture'/'comfy-workflows'
         copied.mkdir(parents=True)
-        for name in ('jobs.py', 'scope.py', 'worker.py', 'transport.py', 'metadata.py', 'plugin.yaml'):
+        for name in ('jobs.py', 'scope.py', 'worker.py', 'transport.py', 'metadata.py', 'plugin.yaml', 'seed_guard.py'):
             shutil.copyfile(ROOT/name, copied/name)
         dependency = copied.parent/'ubuntu-runtime'
         dependency.mkdir()

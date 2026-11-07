@@ -33,7 +33,7 @@ class Context:
     profile_name = 'default'
 
     def __init__(self):
-        self.calls, self.accepted, self.tasks, self.hooks = [], {}, [], {}
+        self.calls, self.accepted, self.tasks, self.hooks, self.ready = [], {}, [], {}, []
         self.task_options = []
         self.lose_receipt_once = False
         self.reply = None
@@ -64,6 +64,9 @@ class Context:
 
     def register_hook(self, name, handler):
         self.hooks[name] = handler
+
+    def register_gateway_ready(self, callback):
+        self.ready.append(callback)
 
     def register_platform_handler(self, name, handler):
         pass
@@ -184,14 +187,19 @@ class LocalDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(event), 'delivery_failed')
         self.assertEqual(self.ctx.calls, [])
 
-    async def test_local_consumer_starts_without_a_telegram_factory(self):
+    async def test_registration_waits_for_gateway_then_starts_without_telegram_or_a_model_turn(self):
         delivery = import_module(PACKAGE+'.delivery')
         sender = delivery.install(self.ctx, self.root, store=self.store, service=self.service)
         try:
             self.assertIsInstance(sender.local, local.LocalDelivery)
+            self.assertEqual(self.ctx.tasks, [])
+            self.assertEqual(len(self.ctx.ready), 1)
+            self.ctx.ready[0]()
             self.assertEqual(len(self.ctx.tasks), 1)
             self.assertTrue(self.ctx.task_options[0]['on_gateway_loop'])
             self.assertIn('pre_llm_call', self.ctx.hooks)
+            await self.ctx.hooks['pre_llm_call']()
+            self.assertEqual(len(self.ctx.tasks), 1)
         finally:
             for task in self.ctx.tasks:
                 task.cancel()

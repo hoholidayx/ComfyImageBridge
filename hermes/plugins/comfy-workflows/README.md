@@ -1,4 +1,4 @@
-# Comfy Workflows 0.6.1 / contract 7
+# Comfy Workflows 0.6.5 / contract 7
 
 安装、配置、环境和双端同步见[Hermes 包说明](../../README.md)。此目录只包含 Hermes 客户端；`remote_bridge.py` 是薄入口，服务端实现在独立 Ubuntu 包的 `comfy_workflow_api.workflow_bridge` 中。
 
@@ -19,14 +19,34 @@
 | prompt | 必填，非空，最多8000字符，超限报错 |
 | preset | 默认fast：LoRA/6步/Pruna自定义sigmas；仅用户明确要求时选择quality：无LoRA/25步/Euler simple |
 | images | 可省略或传空数组，有序0–10张本机PNG或图片ID；有编辑底图时将其放在第1项 |
-| size | auto：编辑跟随第一张、文生图1024×1024；支持比例或WxH |
+| size | auto：编辑 latent 跟随第一张参考图处理后的尺寸、文生图1024×1024；支持明确指定比例或WxH |
 | title | 可选，最多80字符，描述生成意图，非视觉核验结论 |
-| seed | 默认固定0，不是随机；无符号64位整数 |
+| seed | 文生图默认固定0；edit默认随机，显式冲突自动替换并告知；无符号64位整数 |
 | count | 默认1，范围1–4，各张seed递增 |
 
 aiwave/grok-4.3 会拒绝 seed 含超大整数 `maximum` 的工具 schema，因此模型工具 schema 将无符号64位上限写入描述；运行时仍严格校验 `0 ≤ seed` 且 `seed + count - 1 < 2^64`。
 
 指定尺寸64–2048且为32的倍数；比例模式沿用1MP/32对齐，实际尺寸写回记录。精确9:16可用576x1024或864x1536。CFG固定1、负向为空，不接受任意steps/cfg/use_lora/negative_prompt。
+
+编辑默认保留 `size=auto`，请求、后台 worker 与 SSH 提交全程传递 `output_size={"mode":"follow_image"}`。第一张参考图在服务端按默认约 1024×1024 的像素面积等比缩放并做 32 对齐，采样 latent 和 fast 的 sigma 分辨率偏移共同跟随该处理结果。原始 PNG 宽高无需预先满足输出尺寸限制；输出也不保证保持原始像素宽高。只有明确要求其他画布尺寸时才指定比例或 WxH。
+
+## Qwen Image 2.1 编辑 seed 保护
+
+**生成图作为参考图再次 edit 时，避免沿用它的生成 seed。** 当前模型配置的合成图对照已复现同源 seed 触发纹理劣化；这是一条工作流使用约束，不是所有模型的通用结论。
+
+客户端复用当前 profile 的 `jobs.sqlite3`，为所有 Qwen 文生图和编辑输出登记文件 SHA256 与实际生成 seed。同一图片可以对应多个已知生成 seed。新 `comfy_image` 和兼容 `comfy_edit` 共用保护：
+
+- edit 省略 seed：随机选择基值，避开所有参考图的已知直接生成 seed。
+- 显式 seed 冲突：自动选择新基值；`seed_used` 返回实际值，`seed_policy` 记录请求值、实际值、选择原因和未知来源数量。
+- `count>1`：保持逐张 `seed+i`，整个连续区间都不得与已知参考图 seed 冲突。
+- 未知来源：允许编辑并标记未知。省略 seed 时随机；显式指定且未查到冲突时保留，不能保证它没有未知冲突。
+- 已选值在远端提交前保存；恢复与重试复用该值。已尝试提交的任务不换 seed、不自动重生。数据库故障会停止提交，不伪装成来源未知。
+
+兼容入口在 SSH 提交前写入轻量 `seed-intents` 记录，仅含实际 seed 策略、输入哈希与数量，不保存图片或提示词；远端回执落盘后移除。响应丢失时保留该记录，并返回实际 `seed_used` 与 `seed_intent_id`，不能因未收到回复而自动重提。
+
+SHA256 按整个文件的原始字节计算，改名和字节相同的副本可以匹配。重新压缩、修改元数据或调整像素都会改变文件字节，哈希未登记时按未知来源处理。
+
+索引校验当前参考图的直接生成 seed。旧产物与旧回执会幂等补录；文件已过期但有可靠 hash/seed 时仍保留来源记录。图片和大回执清理不会删除该索引。直接在 ComfyUI 或 Ubuntu SDK/CLI 操作不经过客户端保护，应自行换用新 seed。
 
 ## 参考图与提示词
 

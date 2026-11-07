@@ -1,7 +1,9 @@
 """Finite detached job observer. Restarting it never blindly resubmits a prompt."""
 import argparse
+import base64
 from contextlib import contextmanager
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -200,6 +202,11 @@ class Runner:
         return False
 
     def prepare(self):
+        from .jobs import seed_notice
+        self.store.prepare_seed_inputs(self.task_id)
+        policy = self.store.require_job(self.task_id).get('seed_policy')
+        if policy:
+            self.progress('seed_selection', seed_notice(policy))
         self.progress('preparing', '正在唤醒并检查生图服务。', state='preparing')
         started = self.clock()
         operation_id = self.store.require_job(self.task_id).get('runtime_operation_id')
@@ -237,9 +244,15 @@ class Runner:
         return not self.cancelled_before_submit()
 
     def submit(self):
+        if self.store.prepare_seed_inputs(self.task_id):
+            policy = self.store.require_job(self.task_id)['seed_policy']
+            self.progress('seed_adjusted_before_submit', f"提交前发现参考图 seed 冲突，实际 seed 已调整为 {policy['selected_seed']}。")
         job = self.store.require_job(self.task_id)
         request = {k: job['request'][k] for k in ('prompt', 'preset', 'seed', 'output_size')}
         blobs = self.transport.images(job['input_paths']) if job['input_paths'] else []
+        if blobs and [hashlib.sha256(base64.b64decode(b, validate=True)).hexdigest() for b in blobs] != [
+                value['file_sha256'] for value in job['input_fingerprints']]:
+            raise ValueError('Reference changed while preparing upload; no task submitted')
         packet = {'operation': 'submit', 'workflow': 'qwen-image-2.1-edit' if blobs else 'qwen-image-2.1-t2i',
                   'request': request, 'images': blobs, 'count': job['request']['count']}
         # This mark is durable before POST. Loss of the response can never cause automatic resubmission.

@@ -9,6 +9,7 @@ import shutil
 import struct
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from .metadata import client_metadata
 
@@ -48,6 +49,34 @@ class Transport:
                 self.record(error['task_id'], {'error': error})
             return {'success': False, 'error': error, 'metadata': response.get('metadata', {})}
         return {'success': True, 'result': response['result'], 'metadata': response.get('metadata', {})}
+
+    def select_edit_seed(self, request, blobs, count):
+        """Legacy submissions share the same profile-local provenance constraint."""
+        from .jobs import Store
+        from . import seed_guard
+        store = Store(self.data_dir)
+        identities = [seed_guard.fingerprint(base64.b64decode(b, validate=True)) for b in blobs]
+        with store.connection() as db:
+            policy = seed_guard.select_seed(db, identities, request.get('seed'), count)
+        return {**request, 'seed': policy['selected_seed']}, policy
+
+    def freeze_legacy_seed(self, policy, blobs, count):
+        """Persist a minimal seed intent before an uncertain legacy remote call."""
+        intent_id = str(uuid.uuid4())
+        path = self.data_dir/'seed-intents'/(intent_id+'.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        value = {'intent_id': intent_id, 'created_at': datetime.now(timezone.utc).isoformat(),
+                 'state': 'submission_started', 'seed_policy': policy, 'count': count,
+                 'input_sha256': [hashlib.sha256(base64.b64decode(b, validate=True)).hexdigest() for b in blobs]}
+        with path.open('x') as stream:
+            json.dump(value, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return intent_id
+
+    def release_legacy_seed(self, intent_id):
+        # Only remove after the remote receipt durably records the chosen seed.
+        (self.data_dir/'seed-intents'/(intent_id+'.json')).unlink(missing_ok=True)
 
     def directory(self, task_id):
         if str(uuid.UUID(task_id)) != task_id:
@@ -128,6 +157,19 @@ class Transport:
             output['remote_path'] = output['path']
             output['path'] = str(path)
         self.record(result['task_id'], result)
+        if result.get('workflow') in ('qwen-image-2.1-edit', 'qwen-image-2.1-t2i'):
+            from .jobs import Store
+            store = Store(self.data_dir)
+            with store.connection() as db:
+                db.execute('BEGIN IMMEDIATE')
+                for output in result['outputs']:
+                    seed = output.get('seed_used')
+                    if (seed is None and len(result['outputs']) == 1
+                            and result.get('count', result.get('request_used', {}).get('count', 1)) == 1
+                            and len(result.get('children', [])) <= 1):
+                        seed = result.get('seed_used')
+                    if seed is not None:
+                        store.register_provenance(db, output, seed)
         # Match the backend's count cap for local downloaded copies as well.
         cap = result.get('cleanup', {}).get('max_tasks', 100)
         completed = [p for p in (self.data_dir / 'tasks').iterdir() if p.is_dir() and not p.is_symlink() and (p / '1.png').is_file()]

@@ -1,14 +1,15 @@
 # Hermes 插件包
 
-本目录包含 `comfy-workflows 0.6.2` 和 `ubuntu-runtime 0.3.1` 两个相邻安装的 Hermes 插件。生图、编辑、任务和图片索引在 Hermes 侧；工作流编译、ComfyUI API、服务管理和防睡眠锁在独立的 [Ubuntu 包](../ubuntu/README.md)。跨机调用只通过已有 SSH 私钥，不需要新的 HTTP 服务。
+本目录包含 `comfy-workflows 0.6.5` 和 `ubuntu-runtime 0.3.1` 两个相邻安装的 Hermes 插件。生图、编辑、任务和图片索引在 Hermes 侧；工作流编译、ComfyUI API、服务管理和防睡眠锁在独立的 [Ubuntu 包](../ubuntu/README.md)。跨机调用只通过已有 SSH 私钥，不需要新的 HTTP 服务。
 
 ## 环境与兼容
 
 - Python 3.12、uv、OpenSSH；Python 运行时代码使用标准库。插件使用 Hermes 已有的 Telegram 适配器依赖，不额外安装 PyTorch、ROCm 或 ComfyUI。
 - Hermes 必须提供插件工具、原生命令、`register_platform_handler`、`pre_llm_call` 和可信会话路由接口。图片主动推送和按钮目前支持 Telegram；CLI 可查询本地任务，不主动推送。
+- 桌面回图消费者通过 `register_gateway_ready` 在网关循环就绪后启动；插件注册期间只登记回调，不导入或等待网关。冷启动、热重载和后台任务恢复不需要模型发起新一轮对话，卸载插件会取消未启动回调与已运行消费者。
 - 常驻工具 `tools.tool_search.eager` 和工具历史裁剪 `agent.tool_history_echo` 需要支持这些选项的 Hermes 版本。本仓库不修改 Hermes 核心；缺少接口时不能仅靠复制插件得到完整功能，见[兼容说明](../docs/hermes-compatibility.md)。
 - 网络唤醒发送端当前支持同一局域网的 macOS，运行时查询实际 `enN` 路由和 IP；不经 VPN 广播，不提供 Linux/Windows WoL 发送适配。Ubuntu 必须已配置网卡 WoL。
-- Ubuntu SDK 为 `0.6.1`，工作流协议为 `7`。版本和代码哈希由 `ubuntu/config/client-contract.json` 显式绑定。
+- Ubuntu SDK 为 `0.7.2`，工作流协议为 `7`。版本和代码哈希由 `ubuntu/config/client-contract.json` 显式绑定。
 
 ## 安装
 
@@ -68,7 +69,7 @@ uv run python scripts/export_contract.py --output ../ubuntu/config/client-contra
 ```
 
 ```json
-{"prompt":"以 <image1> 为底图，保持构图与物体形状；只采用 <image2> 的橙蓝配色，不加入第二张图中的其他物体。","title":"机器人配色编辑","images":["img_000001","/absolute/reference.png"],"preset":"quality","size":"864x1536"}
+{"prompt":"以 <image1> 为底图，保持构图与物体形状；只采用 <image2> 的橙蓝配色，不加入第二张图中的其他物体。","title":"机器人配色编辑","images":["img_000001","/absolute/reference.png"],"preset":"quality","size":"auto"}
 ```
 
 | 参数 | 约束与默认值 |
@@ -76,14 +77,18 @@ uv run python scripts/export_contract.py --output ../ubuntu/config/client-contra
 | `prompt` | 必填，1–8000 字符，超限报错，不截断 |
 | `images` | 有序 0–10 张本机 PNG 路径或 `img_000001`；无图为文生图 |
 | `preset` | 默认 `fast`：LoRA、6 步、Euler/Pruna 自定义 sigmas；`quality`：无 LoRA、25 步、Euler/simple，文生图和编辑均沿用保存的 ComfyUI 官方模板 |
-| `size` | 默认 `auto`：文生图 1024×1024，编辑保留第一张原图尺寸；可用比例或 `宽x高` |
+| `size` | 默认 `auto`：文生图 1024×1024，编辑 latent 跟随第一张参考图处理后的尺寸；可明确指定比例或 `宽x高` |
 | `title` | 可选，最多 80 字符，描述生成意图，供后续查找；不是视觉核验结果 |
-| `seed` | 默认固定 `0`，不是随机；无符号 64 位，`seed + count - 1 < 2^64` |
+| `seed` | 文生图默认固定 `0`；edit 默认随机并避开已知参考图生成 seed，显式冲突自动换值；无符号 64 位，`seed + count - 1 < 2^64` |
 | `count` | 默认 1，范围 1–4，逐张 seed 递增 |
 
-指定宽高为 64–2048、32 的倍数；比例支持 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`21:9`，约 1MP、32 对齐。精确 9:16 可用 `576x1024` 或 `864x1536`。编辑 `auto` 要求第一张原图尺寸也满足范围和对齐，否则需选择比例或指定宽高。输入每张最多 20 MiB，总计最多 100 MiB。
+指定宽高为 64–2048、32 的倍数；比例支持 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`21:9`，约 1MP、32 对齐。精确 9:16 可用 `576x1024` 或 `864x1536`。编辑通常保留 `size=auto`：客户端传递 `follow_image`，服务端按参考图预算（默认约 1024×1024 像素面积）等比缩放并对齐后，由编码器输出采样 latent；不会预先锁定原图宽高。输入每张最多 20 MiB，总计最多 100 MiB。
 
 CFG 固定 1、负向提示词为空，不暴露任意 steps、CFG 或 LoRA 参数；其他组合在用户测试中出现不稳定结果。单图编辑使用自然语言；多图按数组顺序使用 `<image1>`、`<image2>`，没有下划线。底图放第一张，并逐图说明参考用途。
+
+Qwen Image 2.1 的重要约束是避免用参考图的生成 seed 再次编辑该图。客户端在上传或准备服务前，对实际输入副本计算文件 SHA256，查询 profile 内 `jobs.sqlite3` 的来源索引。字节相同的副本可通过哈希匹配，重新保存后若哈希未登记则标记为未知来源。所有参考图的已知直接生成 seed 均纳入校验，`count` 的整个连续 seed 区间须避开这些 seed。
+
+edit 未提供 seed 时选择随机新值；显式 seed 命中冲突时也自动替换。返回的 `seed_used` 是实际使用值，`seed_policy` 说明请求值、实际值、选择原因与未知来源数量。未知来源图可继续使用；未指定 seed 时随机，显式指定且未发现冲突时保留，不能把来源未知理解成已证明安全。已选 seed 在远端提交前持久化，任务恢复与重试保持可复现；已尝试提交的任务不会因校验重新生成。
 
 `comfy_task` 用于按需查询、取消或列出当前聊天的图片标题；旧 `comfy_generate`、`comfy_edit`、`comfy_tasks`、`comfy_workflows` 保留兼容入口。后两者不会自动完成新入口的整条后台编排。详细接口见[生图插件说明](plugins/comfy-workflows/README.md)。
 
@@ -115,7 +120,7 @@ Ubuntu 启停始终由服务端管理脚本调用配置的原 `run_comfyui.sh`�
 
 ## 数据和维护
 
-任务数据放在所选 profile 的 `plugin-data/comfy-workflows/`，运行时操作收据放在 `plugin-data/ubuntu-runtime/`；不写入本仓库。收据包含请求、实际参数、seed、版本和哈希。产物遵循服务端数量上限，本机下载副本同步限额；轻量标题索引保留，图片删除后标记 `expired`。
+任务数据放在所选 profile 的 `plugin-data/comfy-workflows/`，运行时操作收据放在 `plugin-data/ubuntu-runtime/`；不写入本仓库。收据包含请求、实际参数、seed、版本和哈希。产物遵循服务端数量上限，本机下载副本同步限额；轻量标题索引保留，图片删除后标记 `expired`。图片 hash/seed 来源记录独立于图片及大回执保留，清理后仍可识别已知冲突；登记来源时不保存提示词或聊天内容。
 
 后台观察 worker 独立于网关、SSH 和终端，标准输入关闭，日志写入任务目录，并忽略 SIGHUP。需要手工管理某个观察进程时，使用记录中的 Python 和数据目录：
 

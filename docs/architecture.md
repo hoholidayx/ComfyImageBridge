@@ -26,7 +26,8 @@ sequenceDiagram
     participant Comfy as ComfyUI
     User->>Model: 提示词 / 参考图 / 质量 / 尺寸
     Model->>Client: comfy_image(...)
-    Client-->>Model: task_id，后台处理中
+    Client->>Client: 固定输入副本，查来源索引，选择并保存安全seed
+    Client-->>Model: task_id、实际seed与调整说明，后台处理中
     Client->>Runtime: ensure_ready
     Runtime->>Runtime: SSH / 有限 WoL / 进程与恢复检查
     Runtime->>Comfy: 按需启动原脚本，验证实际渲染
@@ -49,7 +50,19 @@ sequenceDiagram
 
 两种别名指向相同的当前工作流拓扑。编译器根据是否存在参考图移除未使用入口，根据 preset 切换 LoRA 和采样通路；保留已经验证的模型配置。quality 为 25 步 Euler/simple；fast 为 6 步 Euler/Pruna 自定义 sigmas；始终 CFG=1、负向为空。
 
+编辑 `size=auto` 从客户端任务到后台 worker 始终保持 `follow_image`，由服务端编码器按第一张参考图处理后的尺寸提供采样 latent；fast 的 sigma 分辨率偏移也读取同一 latent。客户端不把原始 PNG 的宽高改写为显式输出尺寸。明确指定的比例或宽高使用独立尺寸分支。
+
 快照显式同步，不跟随 UI 的临时更改。任务记录快照 hash、拓扑 hash、后端版本和客户端契约。快照默认提示词与图片名在分发时改为几何示例，执行时仍使用本次请求的参数。同步新拓扑后必须先校验支持范围，不应通过关闭校验硬跑。
+
+## 编辑 seed 与来源索引
+
+Qwen Image 2.1 生成图再次 edit 时避免复用其生成 seed。客户端统一与兼容编辑入口在上传/服务准备之前校验实际输入副本；worker 在尚未提交时复核输入校验和及约束。edit 默认随机，显式冲突自动换值并通过 `seed_used`、`seed_policy` 披露；文生图仍默认固定0。多图取全部参考图的已知直接生成 seed 并集，批量保持连续 `seed+i` 且整个区间避开并集。来源未知可以继续编辑，显式合法 seed 未查到冲突时保留并标记未知；数据库故障不降级为未知。
+
+来源登记复用 `jobs.sqlite3`，记录全部 Qwen 文生图和编辑输出的文件 SHA256 与实际 seed。同一文件可对应多个 seed，uint64 seed 用十进制文本保存。输入的文件字节与已登记输出相同时即可匹配，重新保存后若哈希未登记则按未知来源处理。
+
+下载校验后登记来源；首次升级从已有索引与旧回执幂等回填已记录的 SHA256 和 seed。回填不重新读取旧路径，文件过期或路径被新文件占用也不会改变原记录。此索引独立于图片、任务和回执的保留期限，不保存提示词与聊天正文。图片 ID 继续执行原会话授权，路径对应 hash 查询可在同 profile 内匹配，但不披露其他会话的身份或路径。
+
+实际 seed 在首次远端提交前持久化，恢复不会重新随机；若尚未提交时发现新冲突，先保存新值并通知。已尝试提交的任务不得换 seed 或盲目重生。Ubuntu SDK/CLI 保留固定0默认，客户端保护不覆盖直接调用和手动 ComfyUI。
 
 ## 状态、恢复与防休眠
 

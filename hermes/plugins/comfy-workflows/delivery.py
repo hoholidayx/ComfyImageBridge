@@ -354,7 +354,10 @@ def install(ctx, data_dir, *, service=None, store=None):
     if callable(getattr(ctx, 'apublish_completion', None)):
         from .local_delivery import LocalDelivery
         delivery.local = LocalDelivery(ctx, data_dir, service=delivery.service, store=delivery.store)
-        delivery.local.start()
+        ready = getattr(ctx, 'register_gateway_ready', None)
+        if not callable(ready):
+            raise RuntimeError('Desktop image delivery requires the Hermes gateway-ready callback API')
+        ready(delivery.local.start)
         ctx.register_hook('pre_llm_call', delivery.local.on_session)
     ctx.register_platform_handler('telegram', delivery.factory)
     ctx.register_command('comfy', delivery.command, description='Comfy 任务、取消、显式重试和图片索引',

@@ -34,7 +34,7 @@ def card(image):
     state = 'expired：原图已过期，不可作参考图' if image.get('expired') else 'available：可用 image_id 引用'
     refs = ','.join(_clean(value, 100) for value in image.get('reference_ids', [])[:10]) or '无'
     return (f"[comfy-image:{image_id}] 标题/生成意图：{_clean(image.get('title'))}；"
-            f"{image.get('width')}×{image.get('height')}；{_clean(image.get('preset'), 20)}；"
+            f"{image.get('width')}×{image.get('height')}；{_clean(image.get('preset'), 20)}；seed {image.get('seed_used')}；"
             f"参考图：{refs}；{state}。")
 
 

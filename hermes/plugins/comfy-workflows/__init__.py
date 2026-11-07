@@ -30,6 +30,7 @@ def public_result(value):
 
 def _handle_legacy(ctx, name, args):
     from plugins.plugin_storage import plugin_data_dir
+    policy, seed_intent_id = None, None
     try:
         if not isinstance(args, dict) or set(args) - set(SCHEMAS[name]['parameters']['properties']):
             raise ValueError('Unknown/removed arguments. Use preset=fast (LoRA,6) or quality (no LoRA,25 steps for both generation and editing, following ComfyUI official templates). CFG is fixed at 1; steps/use_lora/cfg/negative_prompt overrides are disabled.')
@@ -46,10 +47,16 @@ def _handle_legacy(ctx, name, args):
             validate_generation(request)
             count = request.pop('count', 1)
             blobs = transport.images(request.pop('images')) if name == 'comfy_edit' else []
+            policy = None
+            if blobs:
+                request, policy = transport.select_edit_seed(request, blobs, count)
+                seed_intent_id = transport.freeze_legacy_seed(policy, blobs, count)
             request.setdefault('output_size', {'mode': 'follow_image'} if name == 'comfy_edit' else {'mode': 'explicit', 'width': 1024, 'height': 1024})
             response = transport.call({'operation': 'submit', 'workflow': 'qwen-image-2.1-edit' if name == 'comfy_edit' else 'qwen-image-2.1-t2i', 'request': request, 'images': blobs, 'count': count})
             if response['success']:
                 task = response['result']
+                if policy:
+                    task['seed_policy'] = policy
                 input_images = transport.save_inputs(task['task_id'], blobs)
                 canonical = dict(task['request_used'])
                 canonical['count'] = count
@@ -58,12 +65,25 @@ def _handle_legacy(ctx, name, args):
                 task.update(original_request=args, request_used=canonical, input_images=input_images,
                             submitted_metadata=response.get('metadata'))
                 transport.record(task['task_id'], task)
+                if seed_intent_id:
+                    transport.release_legacy_seed(seed_intent_id)
+                    seed_intent_id = None
                 response = {'success': True, **task, 'metadata': response.get('metadata'), 'next': 'Call comfy_task action=result wait_seconds=30 with this task_id; never re-submit to poll.'}
             elif response.get('error', {}).get('task_id'):
                 task_id = response['error']['task_id']
                 input_images = transport.save_inputs(task_id, blobs)
                 transport.record(task_id, {'original_request': args, 'input_images': input_images,
+                                          'request_used': {**request, 'count': count,
+                                              'images': [image['path'] for image in input_images]},
+                                          'seed_policy': policy,
                                           'submitted_metadata': response.get('metadata'), 'state': 'submission_uncertain'})
+                if seed_intent_id:
+                    transport.release_legacy_seed(seed_intent_id)
+                    seed_intent_id = None
+            if policy and not response.get('success'):
+                response.update(seed_policy=policy, seed_used=policy['selected_seed'])
+                if seed_intent_id:
+                    response['seed_intent_id'] = seed_intent_id
         else:
             task_id = args['task_id']
             if not (transport.directory(task_id) / 'receipt.json').is_file():
@@ -78,6 +98,8 @@ def _handle_legacy(ctx, name, args):
                     result['request_used'] = prior['request_used']
                 elif result.get('request_used') and prior.get('input_images'):
                     result['request_used']['images'] = [image['path'] for image in prior['input_images']]
+                if prior.get('seed_policy'):
+                    result['seed_policy'] = prior['seed_policy']
                 transport.record(task_id, {key: value for key, value in result.items() if key != 'outputs'})
                 meta = response.get('metadata')
                 response = transport.download(result) if result.get('outputs') else {'success': True, **result}
@@ -86,8 +108,11 @@ def _handle_legacy(ctx, name, args):
             response['receipt_path'] = str(transport.directory(response['task_id'])/'receipt.json')
         return json.dumps(public_result(response), ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({'success': False, 'error': {'type': type(exc).__name__, 'message': str(exc), 'retry_submission': False},
-                           'metadata': {**client_metadata(), 'stale_copy': None}}, ensure_ascii=False)
+        result = {'success': False, 'error': {'type': type(exc).__name__, 'message': str(exc), 'retry_submission': False},
+                  'metadata': {**client_metadata(), 'stale_copy': None}}
+        if policy:
+            result.update(seed_policy=policy, seed_used=policy['selected_seed'], seed_intent_id=seed_intent_id)
+        return json.dumps(result, ensure_ascii=False)
 
 
 def handle(ctx, name, args):
@@ -130,7 +155,10 @@ def _public_job(value):
         return [_public_job(item) for item in value]
     if not isinstance(value, dict):
         return value
-    allowed = {'success', 'task_id', 'image_id', 'title', 'state', 'stage', 'preset', 'seed_used',
+    if {'requested_seed', 'selected_seed', 'reason'} <= value.keys():
+        return {key: value[key] for key in ('requested_seed', 'selected_seed', 'reason',
+                'known_reference_count', 'unknown_reference_count') if key in value}
+    allowed = {'success', 'task_id', 'image_id', 'title', 'state', 'stage', 'preset', 'seed_used', 'seed_policy',
                'count', 'width', 'height', 'path', 'expired', 'reference_ids', 'artifacts', 'tasks',
                'worker_running', 'elapsed_seconds', 'queued_seconds', 'running_seconds', 'stalled',
                'last_progress_at', 'stall_reason', 'cancel_requested', 'error', 'message', 'receipt_path', 'created_at',
