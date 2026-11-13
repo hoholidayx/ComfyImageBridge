@@ -51,4 +51,27 @@ ComfyUI 已完成但取图暂时失败时，服务在 `wait_timeout` 内重试�
 uv run --locked --extra mcp python examples/mcp_client.py --state-dir "$(mktemp -d)"
 ```
 
-实际客户端可用 `--url` 显式连接部署好的 MCP 入口。该命令会提交真实生图请求。可重复传入 `--image` 指定有序参考图，也可传入 `--task-id` 续查已有任务。实机验证安排见 [上线待办](mcp-rollout.md)。
+实际客户端可用 `--url` 显式连接部署好的 MCP 入口。该命令会提交真实生图请求。可重复传入 `--image` 指定有序参考图，也可传入 `--task-id` 续查已有任务。
+
+## 独立验收
+
+[验收脚本](../ubuntu/examples/verify_image_mcp.py) 可从 Mac 或 Ubuntu 运行。先通过各自的管理脚本确认 Comfy MCP 健康、ComfyUI 就绪。在仓库根目录执行，将示例 IP 换成实际内网地址。
+
+```bash
+uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
+  --url http://192.0.2.10:8787/mcp
+
+uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
+  --url http://192.0.2.10:8787/mcp --generate --edit --size 512x512
+```
+
+默认只发现工具并查询一个不存在的任务。加 `--generate` 后提交一次合成文生图，再用新连接重放同一 ID、检查冲突、轮询、重复取图并校验 PNG 与 SHA-256。`--edit` 追加一次使用生成图和仓库合成色板的参考图编辑。每个任务的本地图片和回执存于临时目录，脚本退出时自动清理。服务端任务仍按各自的保留规则管理。`--wait-seconds` 调整每个任务的轮询时间。脚本把原请求 ID 打印到 stderr，超时或连接中断时应按原 ID 续查。连接 Comfy MCP 时可用示例客户端的 `--task-id`。
+
+同一脚本可验收通过 MCP 暴露的 OpenAI Images 兼容供应商。先启动已配置供应商 URL、模型和凭据的独立 MCP 适配器。将 MCP 访问令牌安全加载到环境变量，供应商 API 密钥由适配器读取。示例回环 URL 对应适配器的模型入口。
+
+```bash
+uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
+  --url http://127.0.0.1:8790/mcp/example --token-env IMAGE_MCP_TOKEN --generate
+```
+
+省略尺寸时由服务端选择默认尺寸。经兼容供应商运行 `--generate` 可能产生实际费用。历次结果见[实机验收记录](mcp-rollout.md)。

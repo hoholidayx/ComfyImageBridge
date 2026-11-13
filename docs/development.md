@@ -34,7 +34,7 @@ uv run --project hermes python hermes/scripts/check.py
 ## 发布步骤
 
 1. 保持 Python 3.12 和独立 uv 环境。SDK 基础安装使用标准库，MCP 依赖放在 `mcp` 可选组。
-2. 更新 Ubuntu 包版本和必要文档，运行根检查脚本与 `git diff --check`。部署和真实生成验收见 [上线待办](mcp-rollout.md)。
+2. 更新 Ubuntu 包版本和必要文档，运行根检查脚本与 `git diff --check`。部署后的真实生成使用[独立 MCP 验收入口](mcp.md#独立验收)，结果记入[实机验收记录](mcp-rollout.md)。
 3. 仅在维护冻结的 Hermes 客户端运行代码或 `plugin.yaml` 时，更新插件版本并导出旧客户端 manifest：
 
    ```bash
