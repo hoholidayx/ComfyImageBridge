@@ -8,3 +8,9 @@
 - 不提交真实配置、SSH 密钥、用户提示词、聊天记录、参考图、生成图、历史任务或回执。示例仅使用合成几何图片和文档示例地址。
 - 改动客户端运行代码或 `plugin.yaml` 后，更新版本并运行 `hermes/scripts/export_contract.py`；用根目录 `scripts/check.py` 核对跨包契约。
 - 修改参数与工具行为时同步中文文档。不要重新开放任意步数、CFG 或负向提示词；当前 fast 为 LoRA/6 步，默认 quality 为无 LoRA/40 步，CFG=1。
+
+## Qwen uni 工作流
+
+- 本项目只维护 `qwen-image-2.1-unified.json`。文生图和编辑保留各自的接口别名，共用一份快照。仓库的 `ubuntu/workflows/` 和 Bridge 部署的 `workflows/` 只放当前 uni 及清单。测试导出、单档位副本和部署临时文件用后清理。清理限于 Bridge 项目和部署目录，保留 ComfyUI 用户工作流、自定义节点及其他项目文件。
+- 两个入口和两个档位均使用 uni 原生 KSampler、Euler/simple、CFG 1、denoise 1。默认 quality 关闭加速 LoRA、运行 40 步，fast 启用加速 LoRA、运行 6 步。
+- 改动工作流、预设或编译器后，离线比较同一输入的两档执行图。获准实机验收时，用 MCP 分别跑 fast 和默认 quality 的文生图和图生图，解码 PNG，并核对 ComfyUI 执行记录中的采样器、步数、LoRA 分支和参考图数。

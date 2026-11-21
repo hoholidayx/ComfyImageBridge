@@ -113,7 +113,7 @@ async def verify_job(connection, directory, request, *, label, size, wait_second
         require(image.size == dimensions, "Decoded PNG dimensions differ from the receipt")
         require(size is None or image.size == size, "Decoded PNG dimensions differ from the requested size")
         require(any(low != high for low, high in image.convert("RGB").getextrema()), "Decoded PNG is a solid color")
-    if "seed" in request:
+    if request.get("images") and "seed" in request:
         require(metadata.get("seed_used") not in (None, request["seed"]), "Edit reused the reference seed")
     emit(case=label, width=dimensions[0], height=dimensions[1], seconds=round(time.monotonic() - started, 2),
          reconnect=True, request_conflict=True, deduplicated_attachment=True)
@@ -127,6 +127,9 @@ async def run(connection, args):
         return
     require(not args.edit or "images" in properties, "This endpoint does not support reference images")
     options = {"preset": "quality"} if "preset" in schema.get("required", []) else {}
+    if args.preset is not None:
+        require("preset" in properties, "This endpoint does not support preset selection")
+        options["preset"] = args.preset
     size = None
     if args.size:
         options["size"] = args.size
@@ -152,6 +155,7 @@ def main():
     parser.add_argument("--token-env", help="Read the MCP bearer token from this environment variable")
     parser.add_argument("--generate", action="store_true", help="Submit a real synthetic generation request")
     parser.add_argument("--edit", action="store_true", help="Additionally submit a real two-reference edit")
+    parser.add_argument("--preset", choices=("fast", "quality"), help="Request this sampling preset")
     parser.add_argument("--size", help="Optional explicit WIDTHxHEIGHT")
     parser.add_argument("--wait-seconds", type=int, default=240, help="Maximum polling time per job")
     args = parser.parse_args()

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from comfy_workflow_api import WorkflowAPI, APIError
 from comfy_workflow_api.compiler import compile_graph, topology
+from comfy_workflow_api._edit import parameters
 from comfy_workflow_api.storage import read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,67 +99,74 @@ class WorkflowsTest(unittest.TestCase):
         for node in ('451', '453', '454', '479', '469', '495'):
             self.assertEqual(fast[node], plain[node])
             self.assertEqual(fast[node], edit[node])
-        self.assertEqual(fast['458']['class_type'], 'SamplerCustom')
-        self.assertEqual(fast['pruna_sigmas']['inputs']['nodes'], '1.0, 0.925, 0.85, 0.625, 0.375, 0.125')
-        self.assertEqual(plain['458']['inputs']['steps'], 40)
-        self.assertFalse(plain['485']['inputs']['switch'])
+        self.assertEqual(fast['458']['inputs']['model'], ['485', 0])
+        self.assertEqual(fast['485']['inputs']['on_true'], ['469', 0])
+        self.assertEqual(fast['469']['inputs']['model'], ['479', 0])
+        self.assertEqual(fast['485']['inputs']['on_false'], ['495', 0])
 
-    def test_presets_compile_correctly_for_both_workflows(self):
-        for alias, example, quality_steps in (('qwen-image-2.1-t2i','t2i.json',40),
-                                             ('qwen-image-2.1-edit','edit-single.json',40)):
-            for preset, steps, lora in (('fast',6,True),('quality',quality_steps,False)):
-                request={**self.request(example),'preset':preset}
-                graph=self.api.compile(alias,request,ROOT/'examples')['prompt']
-                if preset=='quality':
-                    self.assertEqual(graph['458']['inputs']['steps'],steps)
-                else:
-                    self.assertEqual(len(graph['pruna_sigmas']['inputs']['nodes'].split(',')),steps)
-                self.assertEqual(graph['485']['inputs']['switch'],lora)
-                self.assertEqual(graph['458']['inputs']['cfg'],1)
-                if preset=='quality':
-                    expected=read_json(ROOT/'workflows/reference/comfy-quality.json')['workflows'][alias]['sampling']
-                    actual={key:graph['458']['inputs'][key] for key in expected}
-                    self.assertEqual(actual, {**expected, 'steps': quality_steps})
+    def test_uni_presets_only_change_steps_and_lora_for_generation_and_edit(self):
+        modes = [{'mode': 'explicit', 'width': 576, 'height': 1024},
+                 {'mode': 'aspect_ratio', 'aspect_ratio': '9:16', 'megapixels': .2}]
+        for alias, example in [('qwen-image-2.1-t2i', 't2i.json'), ('qwen-image-2.1-edit', 'edit-single.json')]:
+            for mode in modes + ([{'mode': 'follow_image'}] if alias.endswith('edit') else []):
+                with self.subTest(alias=alias, mode=mode):
+                    request = {**self.request(example), 'seed': 42, 'output_size': mode}
+                    fast, quality = [self.api.compile(alias, {**request, 'preset': preset}, ROOT/'examples')['prompt']
+                                     for preset in ('fast', 'quality')]
+                    for graph, steps, use_lora in [(fast, 6, True), (quality, 40, False)]:
+                        self.assertEqual(graph['458']['class_type'], 'KSampler')
+                        inputs = graph['458']['inputs']
+                        self.assertEqual((inputs['seed'], inputs['cfg'], inputs['sampler_name'], inputs['scheduler'],
+                                          inputs['denoise']), (42, 1, 'euler', 'simple', 1))
+                        self.assertEqual(inputs.pop('steps'), steps)
+                        self.assertIs(graph['485']['inputs'].pop('switch'), use_lora)
+                    self.assertEqual(fast, quality)
 
-    def test_fast_schedule_uses_actual_output_latent_and_original_model_branch(self):
-        for alias,example in [('qwen-image-2.1-t2i','t2i.json'),('qwen-image-2.1-edit','edit-single.json')]:
-            modes=[{'mode':'explicit','width':576,'height':1024},
-                   {'mode':'aspect_ratio','aspect_ratio':'9:16','megapixels':.2,'multiple':32}]
-            if alias.endswith('edit'):
-                modes.append({'mode':'follow_image'})
-            for mode in modes:
-                req={**self.request(example),'preset':'fast','seed':42,'output_size':mode}
-                graph=self.api.compile(alias,req,ROOT/'examples')['prompt']
-                sample=graph['458']['inputs']
-                self.assertEqual(sample['noise_seed'],42)
-                self.assertEqual(sample['model'],['485',0])
-                self.assertEqual(graph['pruna_sigmas']['inputs']['latent'],sample['latent_image'])
-                self.assertEqual(graph['pruna_sampler']['inputs']['sampler_name'],'euler')
-                self.assertEqual(sample['sigmas'],['pruna_sigmas',0])
-                self.assertTrue(graph['485']['inputs']['switch'])
-
-    def test_fast_receipt_records_schedule_and_legacy_fallback_works(self):
-        task=self.api.submit('qwen-image-2.1-t2i',self.request('t2i.json'))
-        directory=self.api._directory(task['task_id'])
-        config=read_json(directory/'sampling.json')
-        self.assertEqual(config['scheduler'],'pruna-v0.2-custom')
-        self.assertEqual(config['raw_sigmas'],[1.0,.925,.85,.625,.375,.125])
-        state=read_json(directory/'task.json')
+    def test_fast_receipt_records_native_sampler_and_recovers_request(self):
+        task = self.api.submit('qwen-image-2.1-t2i', self.request('t2i.json'))
+        directory = self.api._directory(task['task_id'])
+        config = read_json(directory/'sampling.json')
+        self.assertEqual((config['sampler_class'], config['scheduler'], config['steps'], config['use_lora']),
+                         ('KSampler', 'simple', 6, True))
+        state = read_json(directory/'task.json')
         state.pop('request_used')
-        write_json(directory/'task.json',state)
-        self.client.complete=True
-        result=self.api.fetch(task['task_id'])
-        self.assertEqual(result['request_used']['steps'],6)
-        self.assertEqual(result['sampling_config'],config)
+        write_json(directory/'task.json', state)
+        self.client.complete = True
+        result = self.api.fetch(task['task_id'])
+        self.assertEqual(result['request_used']['steps'], 6)
+        self.assertEqual(result['sampling_config'], config)
 
-    def test_unknown_fast_lora_does_not_silently_use_pruna_sigmas(self):
-        snapshot,_=self.api._snapshot('qwen-image-2.1-t2i')
-        for subgraph in snapshot['definitions']['subgraphs']:
-            for node in subgraph['nodes']:
-                if node['id']==479:
-                    node['widgets_values_named']['lora_name']='other-adapter.safetensors'
-        with self.assertRaisesRegex(ValueError,'Unsupported fast LoRA'):
-            compile_graph('qwen-image-2.1-t2i',snapshot,self.request('t2i.json'))
+    def test_fast_requires_the_verified_six_step_lora(self):
+        snapshot, _ = self.api._snapshot('qwen-image-2.1-t2i')
+        subgraph = snapshot['definitions']['subgraphs'][0]
+        next(node for node in subgraph['nodes'] if node['id'] == 479)['widgets_values_named']['lora_name'] = 'other.safetensors'
+        with self.assertRaisesRegex(ValueError, 'Unsupported fast LoRA'):
+            compile_graph('qwen-image-2.1-t2i', snapshot, self.request('t2i.json'))
+
+    def test_sync_keeps_one_uni_graph_for_both_aliases(self):
+        snapshot, entry = self.api._snapshot('qwen-image-2.1-edit')
+        parent, _, defaults = parameters(snapshot)
+        self.assertEqual((defaults['steps'], defaults['use_lora']), (40, False))
+        previous = self.root / entry['path']
+        legacy = self.root / 'workflows/snapshots/qwen-image-2.1-edit' / (entry['sha256'] + '.json')
+        write_json(legacy, snapshot)
+        parent['title'] = 'Updated uni'
+        calls = []
+        def workflow(name):
+            calls.append(name)
+            return snapshot
+        self.client.workflow = workflow
+        for _ in range(2):
+            manifest = self.api.sync_workflows()
+            self.assertEqual(len({item['path'] for item in manifest.values()}), 1)
+            for alias in manifest:
+                self.assertEqual(self.api._snapshot(alias)[0], snapshot)
+        self.assertEqual(calls, ['qwen-image-2.1-unified.json'] * 2)
+        self.assertFalse(previous.exists())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.api.sync_workflows(), manifest)
+        current = self.root / manifest['qwen-image-2.1-edit']['path']
+        self.assertEqual(list((self.root/'workflows/snapshots').rglob('*.json')), [current])
 
     def test_quality_edit_batch_preserves_40_in_children_and_receipts(self):
         request={**self.request('edit-single.json'),'preset':'quality','seed':0}

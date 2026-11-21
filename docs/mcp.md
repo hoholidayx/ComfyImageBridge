@@ -30,7 +30,7 @@ max_pending_tasks = 8
 | `image_result` | `task_id` | 一张 PNG 的 MCP `ImageContent`，结构化字段包括 `task_id`、`width`、`height`、`sha256` 和 `seed_used` |
 
 - `request_id` 是框架在调用前生成并保存的标准小写 UUID，同时也是返回的 `task_id`。同一次提交重试时沿用原 ID 和原参数。重放时省略档位会沿用原任务的档位，包括升级前默认受理的 fast。相同请求返回原任务，同一 ID 配不同提示词或显式改档返回 `request_conflict`。
-- `prompt` 最多 8000 字符。默认使用 uni 工作流的 `quality` 档，文生图和编辑均为 40 步、无加速 LoRA、Euler/simple。显式指定 `fast` 可使用 LoRA 和 6 步采样。CFG 固定为 1。
+- `prompt` 最多 8000 字符。默认使用 uni 工作流的 `quality` 档，文生图和编辑均为 40 步、无加速 LoRA、Euler/simple。显式指定 `fast` 后，同一原生 KSampler 使用 Euler/simple 运行 6 步，并启用加速 LoRA。CFG 固定为 1。
 - `size=auto` 时，文生图使用 1024×1024，编辑跟随第一张参考图经工作流处理后的尺寸。也支持 `宽x高`，每边为 64 至 2048 且为 32 的倍数，以及比例 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`21:9`。
 - 省略 `images` 或传空数组即文生图。编辑接收 1 至 10 张按顺序排列的 PNG base64 字符串。每张最多 20 MiB、每边最多 8192 像素、面积最多 3200 万像素。解码后合计最多 32 MiB，HTTP 请求体上限 48 MiB。参考图由框架发送原始字节。第一张是编辑底图，其余可在提示词中按 `<image2>` 等标记引用。
 - `seed` 和 `seed_used` 使用无符号 64 位整数的十进制字符串。文生图默认 `0`。编辑默认随机，显式 seed 与任一参考图的已知生成 seed 冲突时会自动换值。保留原始 PNG 字节可以命中 SHA-256 来源索引。
@@ -54,6 +54,8 @@ uv run --locked --extra mcp python examples/mcp_client.py --state-dir "$(mktemp 
 实际客户端可用 `--url` 显式连接部署好的 MCP 入口。该命令会提交真实生图请求。可重复传入 `--image` 指定有序参考图，也可传入 `--task-id` 续查已有任务。
 
 ## 独立验收
+
+在生成命令中加 `--preset fast --edit` 可验证 fast 的文生图和图生图。省略 `--preset` 可验证服务端默认档位。
 
 [验收脚本](../ubuntu/examples/verify_image_mcp.py) 可从 Mac 或 Ubuntu 运行。先通过各自的管理脚本确认 Comfy MCP 健康、ComfyUI 就绪。在仓库根目录执行，将示例 IP 换成实际内网地址。
 

@@ -30,7 +30,7 @@ MCP 部署及工具错误见 [MCP 接入](mcp.md)。先用 `scripts/mcp-service.
 
 ## 编辑尺寸与原图不一致
 
-编辑 `size=auto` 跟随第一张参考图经过服务端缩放、对齐后的尺寸，不保证与原始 PNG 的像素宽高相同。检查客户端任务及 worker 的 `output_size` 应为 `{"mode":"follow_image"}`，执行图中 latent 开关应选择 `TextEncodeQwenImage21` 的尺寸输出，fast 的 sigma 节点使用同一采样 latent。0.6.4 修复了客户端把 `auto` 改写为原图固定宽高的问题；已有历史任务不会被重写或重新提交。
+编辑 `size=auto` 跟随第一张参考图经过服务端缩放、对齐后的尺寸，不保证与原始 PNG 的像素宽高相同。检查客户端任务及 worker 的 `output_size` 应为 `{"mode":"follow_image"}`，执行图中 latent 开关应选择 `TextEncodeQwenImage21` 的尺寸输出。0.6.4 修复了客户端把 `auto` 改写为原图固定宽高的问题；已有历史任务不会被重写或重新提交。
 
 固定尺寸与跟随尺寸在相同宽高下的对照均可能正常，不能仅凭分支选择认定花屏原因。诊断时应固定参考图、提示词、seed、模型与采样设置，并同时核对参考图处理尺寸和实际采样尺寸。
 

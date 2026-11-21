@@ -71,9 +71,9 @@ class EditSizeContractTests(unittest.TestCase):
                     self.assertEqual(graph['468']['inputs']['on_false'], ['474', 2])
                     self.assertEqual(graph['474']['inputs']['resolution'], 1024)
                     self.assertEqual(graph['458']['inputs']['latent_image'], ['468', 0])
-                    if preset == 'fast':
-                        self.assertEqual(graph['pruna_sigmas']['inputs']['latent'],
-                                         graph['458']['inputs']['latent_image'])
+                    self.assertEqual(graph['458']['class_type'], 'KSampler')
+                    self.assertEqual(graph['458']['inputs']['steps'], 6 if preset == 'fast' else 40)
+                    self.assertIs(graph['485']['inputs']['switch'], preset == 'fast')
 
 
 if __name__ == '__main__':

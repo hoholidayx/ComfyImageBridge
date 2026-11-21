@@ -58,9 +58,9 @@ sequenceDiagram
 
 ## 参数与快照
 
-两种别名指向相同的当前工作流拓扑。编译器根据是否存在参考图移除未使用入口，根据 preset 切换 LoRA 和采样通路；保留已经验证的模型配置。默认 quality 为 40 步 Euler/simple；fast 为 6 步 Euler/Pruna 自定义 sigmas；始终 CFG=1、负向为空。
+文生图和编辑两个别名共用一份 uni 文件。编译器按参考图数量连接图像入口。两个档位均使用原图的 KSampler、Euler/simple、CFG 1 和空负向提示词。默认 quality 关闭加速 LoRA，运行 40 步。fast 打开加速 LoRA，运行 6 步。
 
-编辑 `size=auto` 从客户端任务到后台 worker 始终保持 `follow_image`，由服务端编码器按第一张参考图处理后的尺寸提供采样 latent；fast 的 sigma 分辨率偏移也读取同一 latent。客户端不把原始 PNG 的宽高改写为显式输出尺寸。明确指定的比例或宽高使用独立尺寸分支。
+编辑 `size=auto` 从客户端任务到后台 worker 始终保持 `follow_image`，由服务端编码器按第一张参考图处理后的尺寸提供采样 latent。客户端不把原始 PNG 的宽高改写为显式输出尺寸。明确指定的比例或宽高使用独立尺寸分支。
 
 快照显式同步，不跟随 UI 的临时更改。任务记录快照 hash、拓扑 hash、后端版本和客户端契约。快照默认提示词与图片名在分发时改为几何示例，执行时仍使用本次请求的参数。同步新拓扑后必须先校验支持范围，不应通过关闭校验硬跑。
 

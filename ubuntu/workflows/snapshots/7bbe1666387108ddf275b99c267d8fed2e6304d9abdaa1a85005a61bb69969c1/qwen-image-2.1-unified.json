@@ -191,10 +191,10 @@
       "title": "Note: Usage",
       "properties": {},
       "widgets_values": [
-        "Unified Qwen Image 2.1. T2I: bypass all LoadImage nodes and enable custom_size. Edit: connect image_1..image_10. use_acceleration_lora selects a fixed branch; keep the LoRA node enabled. Suggested 6 steps with acceleration, 25 without. Model and CLIP are shared; GPU patch switching may still cost time."
+        "Unified Qwen Image 2.1. T2I: bypass all LoadImage nodes and enable custom_size. Edit: connect image_1..image_10. use_acceleration_lora selects a fixed branch; keep the LoRA node enabled. Fast: 6 steps with acceleration LoRA. Quality (default): 40 steps without LoRA. Model and CLIP are shared; GPU patch switching may still cost time."
       ],
       "widgets_values_named": {
-        "text": "## Size\nQwen Image 2.1 has native 2K (2048*2048) support for direct output.\n\n- resolution is a total pixel budget (not width or height). Aspect ratio is preserved.\n- Official default is 1024. The model supports up to 2048.\n- This template starts at 0: no resize beyond a multiple of 32.\n- Output follows image_1. Extra refs can differ in size or aspect.\n- custom_size off: canvas comes from the encode latent (image_1).\n- custom_size on: use ResolutionSelector width/height. Keep it close to the resized image_1 size, or the edit can shift.\n\n## Reference images\n- Up to 10 reference images (image_1 to image_10).\n- Mention them in the prompt as `<image1>`, `<image2>`, ...\n- image_1 is the edit target. The rest are references.\n\n## Custom settings\nIf you need custom settings, enter or unpack the subgraph to edit it. See the [Subgraph](https://docs.comfy.org/interface/features/subgraph) guide.\n\n## Parameters\n- prompt: edit instruction. Use `<image1>` ... `<image10>`.\n- negative_prompt: unused while cfg is 1.\n- cfg: keep 1 for the Qwen Image 2.1 official path. Raise it only if you use a negative prompt.\n- steps: Qwen Image 2.1 official pipeline uses about 40-50 with euler. This template starts at 25. More advanced samplers need fewer steps."
+        "text": "Unified Qwen Image 2.1. T2I: bypass all LoadImage nodes and enable custom_size. Edit: connect image_1..image_10. use_acceleration_lora selects a fixed branch; keep the LoRA node enabled. Fast: 6 steps with acceleration LoRA. Quality (default): 40 steps without LoRA. Model and CLIP are shared; GPU patch switching may still cost time."
       },
       "color": "#222",
       "bgcolor": "#000"
@@ -648,7 +648,7 @@
         "A small blue geometric robot standing beside colorful blocks on a plain white background.",
         "",
         1,
-        6,
+        40,
         false,
         1024,
         1024,
@@ -660,14 +660,14 @@
         "qwen_image_2.1_vae_bf16.safetensors",
         "auto",
         "default",
-        true
+        false
       ],
       "widgets_values_named": {
         "resolution": 1024,
         "prompt": "A small blue geometric robot standing beside colorful blocks on a plain white background.",
         "negative_prompt": "",
         "cfg": 1,
-        "steps": 6,
+        "steps": 40,
         "switch": false,
         "width": 1024,
         "height": 1024,
@@ -679,7 +679,7 @@
         "vae_name": "qwen_image_2.1_vae_bf16.safetensors",
         "device": "auto",
         "dtype": "default",
-        "use_lora": true
+        "use_lora": false
       },
       "title": "Qwen Image 2.1 · Unified"
     }
@@ -1551,7 +1551,7 @@
             "widgets_values": [
               0,
               "randomize",
-              25,
+              40,
               1,
               "euler",
               "simple",
@@ -1560,7 +1560,7 @@
             "widgets_values_named": {
               "seed": 0,
               "control_after_generate": "randomize",
-              "steps": 25,
+              "steps": 40,
               "cfg": 1,
               "sampler_name": "euler",
               "scheduler": "simple",
@@ -1977,10 +1977,10 @@
               "Node name for S&R": "ComfySwitchNode"
             },
             "widgets_values": [
-              true
+              false
             ],
             "widgets_values_named": {
-              "switch": true
+              "switch": false
             }
           },
           {

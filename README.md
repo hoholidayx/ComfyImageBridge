@@ -24,4 +24,4 @@ Ubuntu 使用自己的 Python 3.12 环境和 `uv.lock`。MCP 是可选依赖，�
 - [故障排查](docs/troubleshooting.md)
 - [来源与许可说明](NOTICE.md)
 
-当前 Ubuntu 包版本为 **0.8.1**。Hermes 回退版本为 **0.7.2**，旧 SSH 客户端契约为 **7**。
+当前 Ubuntu 包版本为 **0.8.2**。Hermes 回退版本为 **0.7.2**，旧 SSH 客户端契约为 **7**。

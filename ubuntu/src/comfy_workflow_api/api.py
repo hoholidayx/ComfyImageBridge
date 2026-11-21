@@ -4,13 +4,14 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 import urllib.parse
 import uuid
 from pathlib import Path
 from .client import APIError, Client, png_size
-from .compiler import WORKFLOWS, compile_graph, digest, topology
+from .compiler import UNIFIED_WORKFLOW, WORKFLOWS, compile_graph, digest, topology
 from .storage import now, read_json, write_json
 from .retention import cleanup as cleanup_tasks, cleanup_lock, result_pin
 from .contract import normalize
@@ -43,25 +44,57 @@ class WorkflowAPI:
     def sync_workflows(self):
         """Fetch explicitly; only accept the topology verified with these adapters."""
         supported = read_json(self.root / "workflows/supported.json")
-        snapshots = {alias: self.client.workflow(filename) for alias, filename in WORKFLOWS.items()}
-        for alias, snapshot in snapshots.items():
-            if topology(snapshot) != supported[alias]:
-                raise ValueError(f"Unsupported topology for {alias}; adapter update required. Existing snapshot retained.")
-        manifest = {}
-        for alias, snapshot in snapshots.items():
-            sha = digest(snapshot)
-            relative = f"workflows/snapshots/{alias}/{sha}.json"
-            write_json(self.root / relative, snapshot)
-            manifest[alias] = {"source": WORKFLOWS[alias], "path": relative, "sha256": sha,
-                               "topology": topology(snapshot), "synced_at": now()}
-        write_json(self.root / "workflows/manifest.json", manifest)
+        snapshot = self.client.workflow(UNIFIED_WORKFLOW)
+        signature = topology(snapshot)
+        if any(signature != supported[alias] for alias in WORKFLOWS):
+            raise ValueError("Unsupported uni topology; existing snapshot retained")
+        sha = digest(snapshot)
+        relative = Path("workflows/snapshots") / sha / UNIFIED_WORKFLOW
+        manifest_path = self.root / "workflows/manifest.json"
+        with cleanup_lock(self.data):
+            manifest = read_json(manifest_path) if manifest_path.exists() else {}
+            current = self.root / relative
+            write_json(current, snapshot)
+            if set(manifest) != set(WORKFLOWS) or any(
+                (item.get("source"), item.get("path"), item.get("sha256"), item.get("topology")) !=
+                (UNIFIED_WORKFLOW, relative.as_posix(), sha, signature) for item in manifest.values()
+            ):
+                entry = {"source": UNIFIED_WORKFLOW, "path": relative.as_posix(), "sha256": sha,
+                         "topology": signature, "synced_at": now()}
+                manifest = dict.fromkeys(WORKFLOWS, entry)
+                write_json(manifest_path, manifest)
+            self._retire_snapshots(current)
         return manifest
+
+    def _retire_snapshots(self, current):
+        for directory in current.parent.parent.iterdir():
+            if directory.is_symlink() or not directory.is_dir() or directory == current.parent:
+                continue
+            if directory.name in WORKFLOWS:
+                for legacy in directory.glob('*.json'):
+                    if re.fullmatch('[0-9a-f]{64}', legacy.stem):
+                        legacy.unlink()
+            elif re.fullmatch('[0-9a-f]{64}', directory.name):
+                (directory / UNIFIED_WORKFLOW).unlink(missing_ok=True)
+            else:
+                continue
+            if not any(directory.iterdir()):
+                directory.rmdir()
 
     def _snapshot(self, alias):
         if alias not in WORKFLOWS:
             raise ValueError(f"Unknown workflow: {alias}")
-        manifest = read_json(self.root / "workflows/manifest.json")[alias]
-        snapshot = read_json(self.root / manifest["path"])
+
+        def read_snapshot():
+            manifest = read_json(self.root / "workflows/manifest.json")[alias]
+            return read_json(self.root / manifest["path"]), manifest
+
+        try:
+            snapshot, manifest = read_snapshot()
+        except FileNotFoundError:
+            # A concurrent sync can retire the version selected by the first manifest read.
+            with cleanup_lock(self.data):
+                snapshot, manifest = read_snapshot()
         supported = read_json(self.root / "workflows/supported.json")
         if digest(snapshot) != manifest["sha256"] or topology(snapshot) != supported[alias]:
             raise ValueError("Snapshot integrity or topology check failed; sync or update adapter explicitly")

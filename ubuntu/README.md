@@ -43,7 +43,7 @@ uv run python scripts/check.py
 - `qwen_image_2.1_vae_bf16.safetensors`
 - `p_q_image_2.1_6_steps_v0.2_comfyui_bf16.safetensors`
 
-ComfyUI 还需具备快照使用的 `TextEncodeQwenImage21`、`QwenImage21Cache`、`ResolutionSelector`、`ComfySwitchNode`、`SaveImageAdvanced` 和 fast 所需的 `ViggleTurboSigmas` 等节点。本仓库不会安装节点或下载模型。更换模型、LoRA 或节点拓扑后须更新适配器并验证，不能只替换文件名假定兼容。
+ComfyUI 还需具备快照使用的 `TextEncodeQwenImage21`、`QwenImage21Cache`、`ResolutionSelector`、`ComfySwitchNode` 和 `SaveImageAdvanced` 等节点。本仓库不会安装节点或下载模型。更换模型、LoRA 或节点拓扑后须更新适配器并验证，不能只替换文件名假定兼容。
 
 编译和生成使用本地快照，不依赖 ComfyUI UI 中的默认提示词。若需显式从 UI 同步，先将快照导入 ComfyUI 并保存为 `qwen-image-2.1-unified.json`，再执行：
 
@@ -51,16 +51,16 @@ ComfyUI 还需具备快照使用的 `TextEncodeQwenImage21`、`QwenImage21Cache`
 uv run comfy-workflow sync-workflows
 ```
 
-拓扑不受支持时拒绝同步，保留现有快照。每个任务保存快照版本与 SHA256；不会自动跟随上游模板更新。
+同步只读取一次 uni。两个别名指向同一文件，新版本发布后清理上一份快照。拓扑不受支持时保留现有快照。每个任务保存快照版本与 SHA256；不会自动跟随上游模板更新。
 
 ## 生图参数
 
 | preset | 步数 / LoRA | 采样行为 |
 | --- | --- | --- |
-| `fast` | 6 步，启用 LoRA | Euler，Pruna v0.2 的自定义 sigma 序列与分辨率偏移 |
-| `quality`（默认） | 40 步，不启用 LoRA | Euler / simple，使用 uni 工作流的基础模型分支 |
+| `fast` | 6 步，启用 LoRA | 原生 KSampler，Euler / simple |
+| `quality`（默认） | 40 步，不启用 LoRA | 原生 KSampler，Euler / simple |
 
-文生图和编辑的 quality 当前均为 40 步。fast 不使用 quality 的 simple 调度；实际 `sampling_config` 会写入 receipt。CFG 固定为 1、负向提示词必须为空，其他组合因既有实测不稳定而拒绝。步数由 preset 固定，不能任意指定。
+两个入口使用同一份 uni 文件，档位只改变步数和加速 LoRA 开关。回执的 `sampling_config` 记录实际提交的采样配置。CFG 固定为 1、负向提示词必须为空，其他组合因既有实测不稳定而拒绝。步数由 preset 固定，不能任意指定。
 
 `prompt` 必填，最多 8000 字符，超限报错；直接使用本 SDK/CLI 时 `seed` 默认固定 0，不随机，范围为无符号 64 位整数。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
 
@@ -80,7 +80,7 @@ uv run comfy-workflow sync-workflows
 {"mode":"follow_image"}
 ```
 
-编辑默认使用 `follow_image`：采样 latent 取自 `TextEncodeQwenImage21` 的尺寸输出，随第一张参考图经过缩放和 32 对齐后的尺寸变化；fast 的 sigma 分辨率偏移使用同一 latent。`reference_resolution` 为 0–4096 且能被 32 整除，默认 1024，表示约 1024×1024 的像素面积并保留比例；0 表示按原始参考图尺寸做 32 对齐。跟随模式不会预先锁定原图像素宽高。
+编辑默认使用 `follow_image`：采样 latent 取自 `TextEncodeQwenImage21` 的尺寸输出，随第一张参考图经过缩放和 32 对齐后的尺寸变化。`reference_resolution` 为 0–4096 且能被 32 整除，默认 1024，表示约 1024×1024 的像素面积并保留比例；0 表示按原始参考图尺寸做 32 对齐。跟随模式不会预先锁定原图像素宽高。
 
 明确要求其他输出画布时可指定比例或宽高。支持比例为 `1:1`、`4:3`、`3:4`、`16:9`、`9:16`、`3:2`、`2:3`、`21:9`；指定宽高为 64–2048 且能被 32 整除，比例模式为 0.1–4 百万像素。例子均使用相对图片路径，CLI 相对于请求 JSON 所在目录解析。
 

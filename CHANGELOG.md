@@ -1,5 +1,10 @@
 # 变更记录
 
+## 0.8.2 · 单一 uni 工作流
+
+- 文生图和编辑共用一个快照。fast 和 quality 都使用 uni 原生 KSampler、Euler/simple，分别是加速 LoRA 开 / 6 步和关 / 40 步。
+- MCP 验收脚本支持 `--preset fast --edit`，可在同一服务复验两个 fast 入口。
+
 ## 0.8.1 · 默认 uni quality 40 步
 
 Ubuntu MCP 和 SDK 的文生图、参考图编辑均默认使用 uni 的基础模型分支，Euler/simple、40 步、CFG 1。显式 fast 继续使用 6 步加速 LoRA。

@@ -17,7 +17,7 @@
 | 参数 | 默认与约束 |
 |---|---|
 | prompt | 必填，非空，最多8000字符，超限报错 |
-| preset | 默认fast：LoRA/6步/Pruna自定义sigmas；仅用户明确要求时选择quality：无 LoRA、Euler/simple，Ubuntu 0.8.1 为 40 步 |
+| preset | Hermes 默认 fast。配合 Ubuntu 0.8.2 时，两档均为 Euler/simple。fast 启用 LoRA 并运行 6 步，quality 关闭 LoRA 并运行 40 步 |
 | images | 可省略或传空数组，有序0–10张本机PNG或图片ID；有编辑底图时将其放在第1项 |
 | size | auto：编辑 latent 跟随第一张参考图处理后的尺寸、文生图1024×1024；支持明确指定比例或WxH |
 | title | 可选，最多80字符，描述生成意图，非视觉核验结论 |
@@ -28,7 +28,7 @@ aiwave/grok-4.3 会拒绝 seed 含超大整数 `maximum` 的工具 schema，因�
 
 指定尺寸64–2048且为32的倍数；比例模式沿用1MP/32对齐，实际尺寸写回记录。精确9:16可用576x1024或864x1536。CFG固定1、负向为空，不接受任意steps/cfg/use_lora/negative_prompt。
 
-编辑默认保留 `size=auto`，请求、后台 worker 与 SSH 提交全程传递 `output_size={"mode":"follow_image"}`。第一张参考图在服务端按默认约 1024×1024 的像素面积等比缩放并做 32 对齐，采样 latent 和 fast 的 sigma 分辨率偏移共同跟随该处理结果。原始 PNG 宽高无需预先满足输出尺寸限制；输出也不保证保持原始像素宽高。只有明确要求其他画布尺寸时才指定比例或 WxH。
+编辑默认保留 `size=auto`，请求、后台 worker 与 SSH 提交全程传递 `output_size={"mode":"follow_image"}`。第一张参考图在服务端按默认约 1024×1024 的像素面积等比缩放并做 32 对齐，两个档位的采样 latent 均跟随该处理结果。原始 PNG 宽高无需预先满足输出尺寸限制；输出也不保证保持原始像素宽高。只有明确要求其他画布尺寸时才指定比例或 WxH。
 
 ## Qwen Image 2.1 编辑 seed 保护
 

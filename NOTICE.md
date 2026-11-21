@@ -7,4 +7,4 @@ ComfyImageBridge 整理 Hermes 插件与 ComfyUI 工作流调用代码，分离�
 - `ubuntu/examples/robot.png` 与 `palette.png` 是几何测试素材；不包含此前用户人物图片、历史生成结果或聊天记录。
 - 本仓库未附加新的开源许可授权。使用、再分发或引入第三方项目时，请核对相应权利与许可；不要据此推定为 MIT 等许可。
 
-上游项目参考：[Hermes Agent](https://github.com/NousResearch/hermes-agent)、[ComfyUI](https://github.com/Comfy-Org/ComfyUI)。工作流参数参考的链接见 `ubuntu/workflows/reference/comfy-quality.json`。
+上游项目参考：[Hermes Agent](https://github.com/NousResearch/hermes-agent)、[ComfyUI](https://github.com/Comfy-Org/ComfyUI)。uni 工作流中的模型来源随快照分发。原始模板见 [ComfyUI 工作流模板](https://github.com/Comfy-Org/workflow_templates)。

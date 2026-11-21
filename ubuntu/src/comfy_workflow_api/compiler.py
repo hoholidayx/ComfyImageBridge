@@ -4,9 +4,11 @@ import json
 from . import _edit
 from .contract import normalize
 
+UNIFIED_WORKFLOW = "qwen-image-2.1-unified.json"
+
 WORKFLOWS = {
-    "qwen-image-2.1-edit": "qwen-image-2.1-unified.json",
-    "qwen-image-2.1-t2i": "qwen-image-2.1-unified.json",
+    "qwen-image-2.1-edit": UNIFIED_WORKFLOW,
+    "qwen-image-2.1-t2i": UNIFIED_WORKFLOW,
 }
 
 

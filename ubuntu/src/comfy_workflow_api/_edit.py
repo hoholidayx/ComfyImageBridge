@@ -1,7 +1,8 @@
 import copy
 import math
 from pathlib import Path
-from .sampling import configure
+from .sampling import NATIVE_SAMPLER
+
 
 def parameters(workflow):
     definitions = {s['id']: s for s in workflow['definitions']['subgraphs']}
@@ -109,4 +110,10 @@ def build_prompt(workflow, uploaded_images, request, prefix):
     if output_ref is None:
         raise ValueError('Subgraph output not found')
     graph['save'] = {'class_type': 'SaveImageAdvanced', 'inputs': {'images': output_ref, 'filename_prefix': prefix, 'format': 'png', 'format.bit_depth': '8-bit', 'format.input_color_space': 'sRGB'}}
-    return configure(graph, request)
+    sampler = graph['458']
+    inputs = sampler['inputs']
+    if sampler['class_type'] != 'KSampler' or any(inputs[key] != value for key, value in NATIVE_SAMPLER.items()):
+        raise ValueError('Unsupported uni sampler; expected KSampler with Euler/simple and denoise 1')
+    if request['use_lora'] and graph['479']['inputs']['lora_name'] != 'p_q_image_2.1_6_steps_v0.2_comfyui_bf16.safetensors':
+        raise ValueError('Unsupported fast LoRA; expected Pruna 6-step v0.2')
+    return graph

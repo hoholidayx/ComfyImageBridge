@@ -84,11 +84,12 @@ class AcceptanceEntryTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as sandbox:
             with patch.object(verifier, "emit"), patch.object(tempfile, "tempdir", sandbox):
-                await verifier.run(connection, SimpleNamespace(generate=False, edit=False, size=None, wait_seconds=5))
+                await verifier.run(connection, SimpleNamespace(generate=False, edit=False, size=None, preset=None, wait_seconds=5))
                 self.assertEqual(requests, {})
-                await verifier.run(connection, SimpleNamespace(generate=True, edit=True, size=None, wait_seconds=5))
+                await verifier.run(connection, SimpleNamespace(generate=True, edit=True, size=None, preset="fast", wait_seconds=5))
             self.assertEqual(list(Path(sandbox).iterdir()), [])
 
         self.assertEqual(len(sessions), 8)
         self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request[1] == "fast" for request in requests.values()))
         self.assertEqual([request[2] for request in requests.values()], [(), (png, palette)])
