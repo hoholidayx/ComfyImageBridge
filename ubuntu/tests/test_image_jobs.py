@@ -90,6 +90,43 @@ class ImageJobsTest(unittest.TestCase):
         self.jobs.submit(task_id, 'A geometric robot', **kwargs)
         return task_id
 
+    def test_optional_sleep_guard_allows_submission_and_png_without_a_desktop(self):
+        self.api.settings['sleep_guard']['enabled'] = True
+        for policy, images in [('disabled', ()), ('unknown', (ROBOT,))]:
+            with self.subTest(policy=policy), patch('comfy_workflow_api.sleep_guard.policy_for', return_value=policy), \
+                    patch('comfy_workflow_api.sleep_guard.start') as start:
+                task = self.submit(images=images)
+                self.jobs.tick()
+                self.client.complete()
+                self.jobs.tick()
+                self.assertEqual(self.jobs.result(task)[1], ROBOT)
+                start.assert_not_called()
+                self.assertFalse((self.api.data/'sleep-guard').exists())
+        self.assertEqual(len(self.client.posts), 2)
+
+    def test_confirmed_sleep_policy_requires_a_lock_before_any_gpu_request(self):
+        self.api.settings['sleep_guard']['enabled'] = True
+        with patch('comfy_workflow_api.sleep_guard.policy_for', return_value='gnome'), \
+                patch('comfy_workflow_api.sleep_guard.start', side_effect=PermissionError):
+            task = self.submit(images=(ROBOT,))
+            self.jobs.tick()
+        self.assertEqual(self.jobs.status(task), {'task_id': task, 'state': 'failed', 'error_code': 'backend_unavailable'})
+        self.assertFalse(self.client.uploads or self.client.posts)
+        self.assertFalse(list((self.api.data/'sleep-guard/leases').glob('*.json')))
+
+    def test_desktop_disappearing_during_lock_acquisition_allows_one_prompt(self):
+        self.api.settings['sleep_guard']['enabled'] = True
+        with patch('comfy_workflow_api.sleep_guard.policy_for', side_effect=['gnome', 'unknown', 'unknown']), \
+                patch('comfy_workflow_api.sleep_guard.start', side_effect=RuntimeError) as start:
+            task = self.submit()
+            self.jobs.tick()
+            self.client.complete()
+            self.jobs.tick()
+            self.assertEqual(self.jobs.result(task)[1], ROBOT)
+        start.assert_called_once()
+        self.assertEqual(len(self.client.posts), 1)
+        self.assertFalse(list((self.api.data/'sleep-guard/tickets').glob('*.json')))
+
     def test_concurrent_duplicates_are_one_durable_job(self):
         request_id = str(uuid.uuid4())
         with ThreadPoolExecutor(max_workers=4) as threads:

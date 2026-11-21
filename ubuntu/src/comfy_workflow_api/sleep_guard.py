@@ -1,8 +1,10 @@
-"""Detached, on-demand GNOME inhibitor; no changes to ComfyUI or power policy."""
+"""Hold the active idle-sleep inhibitor across a request and its queued work."""
 import argparse
 from contextlib import contextmanager
+from contextvars import ContextVar
 import fcntl
 import json
+import logging
 import os
 from pathlib import Path
 import signal
@@ -11,9 +13,14 @@ import sys
 import time
 import uuid
 from .client import Client
+from .backend import BackendUnavailable
 from .storage import now, read_json, write_json
+from .operations import sleep_policy
+from .operations.sleep_inhibitor import command as inhibitor_command, environment, inhibited
 from .operations.lifecycle import ANY_EPOCH
 from .operations.process_identity import identity, matches
+
+_protected_task = ContextVar('sleep_guard_task', default=None)
 
 
 def home(api):
@@ -73,10 +80,17 @@ def live_leases(api):
     return result
 
 
-def status(api):
+def policy_for(api):
+    if api.settings.get('sleep_guard', {}).get('enabled') is not True:
+        return 'disabled'
+    return sleep_policy.detect(environment())
+
+
+def status(api, *, policy=None):
     current = state(api)
     running = matches(current.get('supervisor')) and matches(current.get('worker'))
     result = {**current, 'running': running, 'inhibited': False,
+              'idle_sleep_policy': policy if policy is not None else policy_for(api),
               'log': str(home(api)/'guard.log')}
     from .task_diagnostics import seconds
     lease_details = []
@@ -96,26 +110,17 @@ def status(api):
                   stale=not running, heartbeat_at=current.get('heartbeat'))
     if current.get('token'):
         try:
-            result['inhibited'] = inhibited(current['token'])
+            result['inhibited'] = inhibited(current['token'], current.get('driver', 'gnome'))
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             result['inhibited'] = None
             result['health_error'] = str(exc)
     return result
 
 
-def environment():
-    return {**os.environ, 'DBUS_SESSION_BUS_ADDRESS': os.environ.get('DBUS_SESSION_BUS_ADDRESS') or f'unix:path=/run/user/{os.getuid()}/bus'}
-
-
-def inhibited(token):
-    result = subprocess.run(['/usr/bin/gnome-session-inhibit', '--list'], env=environment(),
-                            text=True, capture_output=True, timeout=5)
-    if result.returncode != 0:
-        raise RuntimeError(f'GNOME inhibitor query failed ({result.returncode}): {result.stderr.strip()[:500]}')
-    return f'comfy-workflow-api-{token}:' in result.stdout
-
-
-def start(api):
+def start(api, *, policy=None):
+    driver = policy if policy is not None else policy_for(api)
+    if driver not in sleep_policy.GUARDS:
+        return status(api, policy=driver)
     deadline = time.monotonic()+12
     launched_token = None
     while time.monotonic() < deadline:
@@ -123,17 +128,18 @@ def start(api):
             current = state(api)
             active = matches(current.get('supervisor'))
             if launched_token and current.get('token') == launched_token and not active:
-                raise RuntimeError('Sleep inhibitor exited before becoming ready; check GNOME session and '+str(home(api)/'guard.log'))
+                raise RuntimeError('Sleep inhibitor exited before becoming ready; see '+str(home(api)/'guard.log'))
             if active and current.get('phase') in ('watching', 'starting'):
                 if current['base_url'] != api.client.base_url:
                     raise RuntimeError('Sleep guard is bound to a different API URL')
+                if current.get('driver', 'gnome') != driver:
+                    raise RuntimeError('Active inhibitor belongs to a different idle-sleep policy')
                 token = current['token']
             elif active:
                 token = None  # let an exiting guard finish before replacing it
             else:
                 token = uuid.uuid4().hex
-                command = ['/usr/bin/gnome-session-inhibit', '--app-id', f'comfy-workflow-api-{token}',
-                    '--reason', 'ComfyUI API requests or queued/running generation tasks', '--inhibit', 'suspend:idle',
+                command = inhibitor_command(driver, token) + [
                     sys.executable, '-m', 'comfy_workflow_api._sleep_guard_worker', '--root', str(api.root),
                     '--base-url', api.client.base_url, '--worker', '--token', token]
                 with (home(api)/'guard.log').open('ab', buffering=0) as log:
@@ -150,14 +156,14 @@ def start(api):
                     if process.poll() is not None or time.monotonic()-launched > 3:
                         raise RuntimeError('Sleep guard launcher failed; see '+str(home(api)/'guard.log'))
                     time.sleep(.02)
-                write_json(home(api)/'state.json', {'token': token, 'phase': 'starting', 'base_url': api.client.base_url,
+                write_json(home(api)/'state.json', {'token': token, 'driver': driver, 'phase': 'starting', 'base_url': api.client.base_url,
                     'supervisor': saved, 'created_at': now(), 'ready': False})
                 launched_token = token
         if token:
-            current = status(api)
+            current = status(api, policy=driver)
             if current.get('token') == token and current.get('ready') and current['running']:
                 if not current['inhibited']:
-                    raise RuntimeError('GNOME did not grant the requested sleep/idle inhibitor')
+                    raise RuntimeError(f'{driver} did not grant the requested sleep/idle inhibitor')
                 return current
         time.sleep(.1)
     raise RuntimeError('Sleep guard did not become ready; no job submitted. See '+str(home(api)/'guard.log'))
@@ -167,7 +173,8 @@ def start(api):
 def hold(api, operation_id=None, task_id=None, service_instance_id=None, purpose=None,
          expected_sleep_epoch=ANY_EPOCH):
     from .sleep_cycle import admission_lock, assert_allowed
-    if not api.settings.get('sleep_guard', {}).get('enabled', False):
+    policy = policy_for(api)
+    if policy not in sleep_policy.GUARDS:
         with admission_lock(api):
             assert_allowed(api, expected_sleep_epoch)
         yield
@@ -181,27 +188,43 @@ def hold(api, operation_id=None, task_id=None, service_instance_id=None, purpose
                 'operation_id': operation_id or str(uuid.uuid4()), 'task_id': task_id,
                 'service_instance_id': service_instance_id, 'purpose': purpose or 'request'})
     try:
-        start(api)
-        yield
+        try:
+            start(api, policy=policy)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            if policy_for(api) in sleep_policy.GUARDS:
+                raise BackendUnavailable('An enabled idle-sleep timer requires a verified inhibitor') from exc
+        else:
+            binding = _protected_task.set((api, task_id))
+            try:
+                yield
+            finally:
+                _protected_task.reset(binding)
+            return
     finally:
         with control(api):
             path.unlink(missing_ok=True)
+    with admission_lock(api):
+        assert_allowed(api, expected_sleep_epoch)
+    yield
 
 
 def ticket(api, task_id, remove=False):
-    if api.settings.get('sleep_guard', {}).get('enabled', False):
+    path = api.data/'sleep-guard'/'tickets'/f'{task_id}.json'
+    if remove:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning('Could not remove sleep guard ticket %s', task_id)
+    elif _protected_task.get() == (api, task_id):
+        from .operations.lifecycle import instance_id
         with control(api):
-            path = home(api)/'tickets'/f'{task_id}.json'
-            if remove:
-                path.unlink(missing_ok=True)
-            else:
-                from .operations.lifecycle import instance_id
-                write_json(path, {'task_id': task_id, 'created_at': now(), 'service_instance_id': instance_id(api)})
+            write_json(path, {'task_id': task_id, 'created_at': now(), 'service_instance_id': instance_id(api)})
 
 
 def stop(api, force=False):
+    policy = policy_for(api)
     with control(api):
-        current = status(api)
+        current = status(api, policy=policy)
         if not current['running']:
             if current.get('phase') not in (None, 'stopped'):
                 raise RuntimeError('Recorded process identity no longer matches; refusing to signal any PID')

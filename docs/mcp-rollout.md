@@ -1,5 +1,11 @@
 # Ubuntu MCP 上线与实机验收
 
+## 2026-11-22 · 0.9.2 自动防睡眠验收
+
+- 使用隔离的任务库、真实 uni 编译器与模拟 ComfyUI 验证文生图和参考图编辑。休眠关闭、会话或电源总线不可访问时，任务正常提交并取回 PNG。确认定时休眠但授锁被拒时，上传数和 GPU 提交数均为零。桌面在授锁时退出的用例提交一次。
+- 在回环网络上，由隔离 Maus 通过统一网关调用 Bridge。配置开启自动防睡眠，系统与会话电源总线不可访问，Comfy 请求交付到原消息卡。OpenAI 官方和 AiWave 路由也交付了模拟供应商的 PNG。[Maus 验收记录](https://github.com/hoholidayx/OpenMausBot/blob/main/docs/verification/async-image-mcp.md)
+- logind 与 GNOME 两种正向策略和锁的判定使用离线用例。Ubuntu 主机当时 SSH 不可达，本次没有现场授锁或 GPU 回执。
+
 ## 2026-11-21 · 0.9.1 生图与运维边界验收
 
 macOS 和 Ubuntu 临时目录分别通过 252 项包测试和 5 项客户端测试。替代运行时下的文生图与参考图编辑均取回示例 PNG；受管实例的就绪证据在入队后变化时，worker 在提交前返回 `backend_unavailable`。

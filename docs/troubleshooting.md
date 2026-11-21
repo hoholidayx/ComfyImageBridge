@@ -30,7 +30,7 @@ MCP 从返回图片的原始字节校验 SHA-256 并登记实际 seed。手动 C
 
 ## 主机不自动睡眠
 
-只读检查 `uv run comfy-workflow sleep-guard status` 与 GNOME/系统 inhibitors、队列及 lease 持有者。请求/队列结束后仍未超过 10 秒宽限期时，短暂持锁正常。lease 与任务进程身份关联；不能仅凭年龄或 GPU 0% 强制删除。
+只读检查 `uv run comfy-workflow sleep-guard status` 的 `idle_sleep_policy`、系统或 GNOME 锁、队列及 lease 持有者。`unknown` 表示未取得足够的定时休眠证据，Comfy 继续工作。请求/队列结束后仍未超过 10 秒宽限期时，短暂持锁正常。lease 与任务进程身份关联；不能仅凭年龄或 GPU 0% 强制删除。
 
 队列未知、远端不可达、取消未结束或调用进程仍存活时先诊断。自动休眠还取决于用户会话是否空闲、桌面策略和其他应用 inhibitor。模块不会修改 GNOME 自动休眠策略。
 

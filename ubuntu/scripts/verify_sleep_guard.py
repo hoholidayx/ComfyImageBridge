@@ -1,4 +1,4 @@
-"""Opt-in GNOME integration test. Uses an isolated fake queue; never starts ComfyUI."""
+"""Verify the host idle-sleep policy and its inhibitor using an isolated queue."""
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -73,55 +73,59 @@ def verify():
             raise AssertionError('guard state timed out: '+json.dumps(current))
 
         try:
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                results = list(pool.map(lambda _: child("print(json.dumps(api.submit('qwen-image-2.1-t2i', {'prompt':'geometric verification', 'output_size':{'mode':'explicit','width':512,'height':512}})))"), range(3)))
-            submissions = [json.loads(result.stdout) for result in results]
-            current = await_state(lambda s: s['running'] and s['inhibited'] and s.get('leases') == 0 and s.get('queued_or_running'))
-            assert len(queue['pending']) == 3
-            report['checks'].append('three concurrent SDK submissions; submitter processes exited; one guard retains real GNOME inhibitor')
-            report['processes'] = {key: current[key] for key in ('supervisor', 'worker')}
-            assert os.getsid(current['supervisor']['pid']) == current['supervisor']['pid']
-            assert os.getsid(current['worker']['pid']) == current['supervisor']['pid']
-            for key in ('supervisor', 'worker'):
-                os.kill(current[key]['pid'], signal.SIGHUP)
-            time.sleep(2.5)
-            assert guard.status(api)['inhibited']
-            report['checks'].append('detached session and process group; both processes survive SIGHUP; queued work exceeds idle grace')
-            try:
-                guard.stop(api)
-                raise AssertionError('busy guard was stopped')
-            except RuntimeError as exc:
-                assert 'active work' in str(exc)
-            report['checks'].append('normal stop refuses active generation')
-            queue['fail'] = True
-            await_state(lambda s: bool(s.get('queue_error')))
-            time.sleep(2.5)
-            assert guard.status(api)['inhibited']
-            report['checks'].append('queue connection failure after submission conservatively retains lock')
-            queue['fail'] = False
-            queue['pending'] = []
-            await_state(lambda s: not s['running'] and s.get('phase') == 'stopped')
-            assert not guard.inhibited(current['token'])
-            report['checks'].append('empty queue releases inhibitor automatically and prunes finished tickets')
-            started = json.loads(child('print(json.dumps(g.start(api)))').stdout)
-            stopped = guard.stop(api)
-            assert not stopped['running'] and not guard.inhibited(started['token'])
-            report['checks'].append('new process can start/status/stop owned guard without sudo')
-            with guard.hold(api):
+            policy = guard.policy_for(api)
+            report['idle_sleep_policy'] = policy
+            if policy in ('gnome', 'logind'):
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    results = list(pool.map(lambda _: child("print(json.dumps(api.submit('qwen-image-2.1-t2i', {'prompt':'geometric verification', 'output_size':{'mode':'explicit','width':512,'height':512}})))"), range(3)))
+                submissions = [json.loads(result.stdout) for result in results]
+                current = await_state(lambda s: s['running'] and s['inhibited'] and s.get('leases') == 0 and s.get('queued_or_running'))
+                assert len(queue['pending']) == 3
+                report['checks'].append('three concurrent SDK submissions; submitter processes exited; one guard retains verified idle-sleep inhibitor')
+                report['processes'] = {key: current[key] for key in ('supervisor', 'worker')}
+                assert os.getsid(current['supervisor']['pid']) == current['supervisor']['pid']
+                assert os.getsid(current['worker']['pid']) == current['supervisor']['pid']
+                for key in ('supervisor', 'worker'):
+                    os.kill(current[key]['pid'], signal.SIGHUP)
                 time.sleep(2.5)
                 assert guard.status(api)['inhibited']
-            await_state(lambda s: not s['running'])
-            report['checks'].append('upload/download request lease protects an empty queue; release is automatic')
-            try:
-                child("api.submit('qwen-image-2.1-t2i', {'prompt':'must not be submitted'})",
-                      env={**os.environ, 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/tmp/comfy-guard-no-such-bus'})
-                raise AssertionError('submission proceeded without a desktop inhibitor')
-            except subprocess.CalledProcessError as exc:
-                assert 'Sleep guard launcher failed' in exc.stderr or 'Sleep inhibitor exited' in exc.stderr
-            assert not queue['pending']
-            assert not guard.live_leases(api)
-            report['checks'].append('unavailable desktop D-Bus fails before generation POST; no leaked lease')
-            report['tasks'] = [task['task_id'] for task in submissions]
+                report['checks'].append('detached session and process group; both processes survive SIGHUP; queued work exceeds idle grace')
+                try:
+                    guard.stop(api)
+                    raise AssertionError('busy guard was stopped')
+                except RuntimeError as exc:
+                    assert 'active work' in str(exc)
+                report['checks'].append('normal stop refuses active generation')
+                queue['fail'] = True
+                await_state(lambda s: bool(s.get('queue_error')))
+                time.sleep(2.5)
+                assert guard.status(api)['inhibited']
+                report['checks'].append('queue connection failure after submission conservatively retains lock')
+                queue['fail'] = False
+                queue['pending'] = []
+                await_state(lambda s: not s['running'] and s.get('phase') == 'stopped')
+                assert not guard.inhibited(current['token'], current['driver'])
+                report['checks'].append('empty queue releases inhibitor automatically and prunes finished tickets')
+                started = json.loads(child('print(json.dumps(g.start(api)))').stdout)
+                stopped = guard.stop(api)
+                assert not stopped['running'] and not guard.inhibited(started['token'], started['driver'])
+                report['checks'].append('new process can start/status/stop owned guard without sudo')
+                with guard.hold(api):
+                    time.sleep(2.5)
+                    assert guard.status(api)['inhibited']
+                await_state(lambda s: not s['running'])
+                report['checks'].append('upload/download request lease protects an empty queue; release is automatic')
+                report['tasks'] = [task['task_id'] for task in submissions]
+            else:
+                child("api.submit('qwen-image-2.1-t2i', {'prompt':'geometric verification'})")
+                assert len(queue['pending']) == 1 and not (api.data/'sleep-guard').exists()
+                queue['pending'].clear()
+                report['checks'].append('host has no confirmed idle timer; SDK submitted without a guard')
+            missing = 'unix:path=' + str(root/'absent-bus')
+            child("api.submit('qwen-image-2.1-t2i', {'prompt':'no accessible power policy'})",
+                  env={**os.environ, 'DBUS_SESSION_BUS_ADDRESS': missing, 'DBUS_SYSTEM_BUS_ADDRESS': missing})
+            assert len(queue['pending']) == 1 and not guard.live_leases(api)
+            report['checks'].append('inaccessible power settings allow one generation POST')
             report['passed'] = True
         finally:
             current = guard.status(api)

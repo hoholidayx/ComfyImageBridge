@@ -26,6 +26,7 @@ comfy_output_dir = ""
 comfy_input_dir = ""
 
 [sleep_guard]
+# Automatically protect work when an active host idle-sleep timer is confirmed.
 enabled = true
 poll_seconds = 2
 idle_grace_seconds = 10

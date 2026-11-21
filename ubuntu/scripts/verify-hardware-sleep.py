@@ -54,7 +54,7 @@ else:
     summary['queue_pending'] = len(queue.get('queue_pending', [])) if current.get('queue_known') else None
     summary['sleep_cycle'] = sleep_cycle.status(api)
     summary['inhibitor'] = {'running': guard.get('running'), 'inhibited': guard.get('inhibited'),
-                            'leases': guard.get('leases')}
+                            'leases': guard.get('leases'), 'idle_sleep_policy': guard.get('idle_sleep_policy')}
     print(json.dumps(summary))
 '''
 
@@ -172,7 +172,7 @@ class Verification:
             if guard.get('inhibited') is False:
                 return current
             time.sleep(1)
-        raise RuntimeError('GNOME inhibitor did not release; validation refused')
+        raise RuntimeError('Sleep inhibitor did not release; validation refused')
 
     def gpu_check(self):
         deadline = elapsed_clock()+15

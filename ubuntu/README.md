@@ -28,7 +28,7 @@ uv run python scripts/check.py
 | `service.uv_bin` | 空时使用 `COMFY_UV_BIN`、PATH 中的 uv，最后尝试 `~/.local/bin/uv` |
 | `retention.max_tasks` | 保留最多 100 个符合清理条件的结束任务 |
 | `retention.comfy_*_dir` | 留空时按 ComfyUI 根目录派生独立 input/output 子目录 |
-| `sleep_guard` | 默认启用，空队列且无 lease 后等待 10 秒释放 |
+| `sleep_guard` | 默认自动检测定时休眠。持锁时在队列空且无 lease 后等待 10 秒释放 |
 
 `COMFY_WORKFLOW_HOME` 可指定本包运行根目录；SDK 的 `WorkflowAPI(root=...)` 和 CLI 的 `--root` 可以显式指定。`COMFYUI_URL` 或 `--base-url` 可覆盖 SDK HTTP 目标；跨主机目标不允许执行本地文件清理。
 
@@ -177,10 +177,22 @@ uv run comfy-workflow cleanup
 
 `retention.auto_cleanup` 默认开启。MCP 工作进程启动时执行维护，随后每 5 分钟检查一次，即使没有成功任务也会执行。SDK 成功取图也会触发任务数量清理。关闭 `auto_cleanup` 可停用自动文件维护，MCP 数据库仍按 `max_tasks` 淘汰图片。只运行 SDK 或停用 MCP 时，可用上方 CLI 执行完整维护。队列不可读取时推迟任务删除，本机日志仍可轮转。配置项见[配置说明](../docs/configuration.md)。
 
-防睡眠 supervisor 使用真实 GNOME 锁，保护排队、生成与管理操作。lease 与持有进程身份绑定，结束后释放；队列空且无 lease 后等待宽限期释放锁。长龄 lease 只报警；网络异常或指标不可读时保守保留，不能按时间强行放睡。
+### 按主机策略防睡眠
+
+`[sleep_guard].enabled = true` 开启自动检测。每次提交和取图时，运维层最多用 1 秒读取当前策略。设置为 `false` 时直接跳过检测。用 `scripts/sleep-guard.sh status` 查看 `idle_sleep_policy`、持锁进程和实际锁状态。
+
+| 检测结果 | Comfy 行为 |
+| --- | --- |
+| `logind` | 运行中的 logind 配置了睡眠动作和有限的正数空闲超时。通过 `systemd-inhibit` 取得并核对 `idle:sleep` 阻止锁，可在没有图形会话时工作。 |
+| `gnome` | GNOME 电源服务正在运行，用户会话处于前台，UPower 报告的当前交流电或电池档位设为挂起或休眠且超时大于零。通过 GNOME 获取并核对 `suspend:idle` 锁。 |
+| `disabled` 或 `unknown` | 休眠关闭，或会话、权限、D-Bus、配置值等不足以确认。直接提交、排队和取图，跳过防睡眠进程、lease 和任务票据。 |
+
+已确认定时休眠却无法取得锁时，Bridge 在上传和提交前复查策略。策略仍启用则返回 `backend_unavailable`，策略已关闭或无法确认则继续。实际挂起、恢复及 ComfyUI 的渲染就绪检查单独生效。检测使用宿主的只读接口。[GNOME 空闲策略](https://teams.pages.gitlab.gnome.org/Websites/help.gnome.org/system-admin-guide/logout-automatic.html) · [logind 管理接口](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.login1.html)
+
+已授予的 lease 与持有进程身份绑定。队列空且无 lease 后按宽限期释放锁。队列暂时不可读时，已有任务票据继续保护已提交工作。
 
 ## 验证范围
 
 `uv run python scripts/check.py` 执行离线单元测试和快照完整性检查，不启动 ComfyUI、生成图片或触碰电源设置。
 
-`uv run python scripts/verify_live.py` 会提交三个真实生成任务，并验证跨进程查询/等待/下载与输出尺寸；只能在部署完成、允许生成时手动运行。`scripts/verify_sleep_guard.py` 是 GNOME 集成验证，会短暂获取真实防睡眠锁，但使用隔离的模拟队列，不启动 ComfyUI。此次仓库整理只做离线验证，未重新验证当前 GPU 状态或部署到远端。
+`uv run python scripts/verify_live.py` 会提交三个真实生成任务，并验证跨进程查询/等待/下载与输出尺寸；只能在部署完成、允许生成时手动运行。`scripts/verify_sleep_guard.py` 使用隔离模拟队列验证本机策略。存在定时休眠时验证实际授锁和释放，同时模拟电源策略不可访问时的提交。此次仓库整理只做离线验证，未重新验证当前 GPU 状态或部署到远端。

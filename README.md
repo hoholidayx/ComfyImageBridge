@@ -23,4 +23,4 @@ Maus 可在统一的异步生图服务中选择 `comfy` 后端，由网关调用
 - [故障排查](docs/troubleshooting.md)
 - [来源与许可说明](NOTICE.md)
 
-当前 Ubuntu 包版本为 **0.9.1**。
+当前 Ubuntu 包版本为 **0.9.2**。
