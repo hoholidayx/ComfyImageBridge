@@ -75,7 +75,7 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def request(self, path, method="GET", body=None, content_type=None, binary=False):
+    def request(self, path, method="GET", body=None, content_type=None, binary=False, *, timeout=None):
         headers = {}
         if isinstance(body, dict):
             body = json.dumps(body).encode()
@@ -85,9 +85,10 @@ class Client:
         target = urllib.parse.urlsplit(self.base_url + path)
         if target.scheme not in ('http', 'https') or not target.hostname or target.username:
             raise ValueError('ComfyUI URL must be an HTTP(S) URL without credentials')
-        deadline = time.monotonic() + self.timeout
+        timeout = self.timeout if timeout is None else min(timeout, self.timeout)
+        deadline = time.monotonic() + timeout
         connection_type = _DeadlineHTTPSConnection if target.scheme == 'https' else _DeadlineHTTPConnection
-        connection = connection_type(target.hostname, target.port, timeout=self.timeout, deadline=deadline)
+        connection = connection_type(target.hostname, target.port, timeout=timeout, deadline=deadline)
         try:
             connection.request(method, urllib.parse.urlunsplit(('', '', target.path or '/', target.query, '')),
                                body=body, headers=headers)

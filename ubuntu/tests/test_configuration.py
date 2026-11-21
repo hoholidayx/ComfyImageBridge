@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from comfy_workflow_api.metadata import client_contract, metadata
 from comfy_workflow_api.settings import load_settings, module_root, service_paths
 from comfy_workflow_api.retention import _safe_root
 from comfy_workflow_api._edit import parameters
@@ -32,25 +31,6 @@ class ConfigurationTest(unittest.TestCase):
         with patch.dict(os.environ, {'COMFY_WORKFLOW_HOME': str(self.root)}):
             self.assertEqual(module_root(), self.root)
             self.assertEqual(module_root(self.root/'other'), self.root/'other')
-
-    def test_missing_or_invalid_client_manifest_cannot_be_accepted(self):
-        self.assertIsNone(metadata(self.root)['expected_plugin_hash'])
-        self.assertTrue(metadata(self.root)['client_contract_error'])
-        for invalid in ({'schema_version': 2}, [], {'schema_version': 1, 'contract_version': 7,
-                                                  'plugins': {'comfy-workflows': []}}):
-            with self.subTest(invalid=invalid):
-                (self.root/'config/client-contract.json').write_text(json.dumps(invalid))
-                self.assertIsNone(client_contract(self.root)['hash'])
-                self.assertTrue(client_contract(self.root)['error'])
-
-    def test_manifest_defines_distinct_client_hashes_without_client_source(self):
-        manifest = {'schema_version': 1, 'contract_version': 7, 'plugins': {
-            'comfy-workflows': {'version': '0.6.1', 'hash': 'a'*64},
-            'ubuntu-runtime': {'version': '0.3.1', 'hash': 'b'*64}}}
-        (self.root/'config/client-contract.json').write_text(json.dumps(manifest))
-        self.assertEqual(metadata(self.root)['expected_plugin_hash'], 'a'*64)
-        self.assertEqual(client_contract(self.root, 'ubuntu-runtime')['hash'], 'b'*64)
-        self.assertIsNone(metadata(self.root)['client_contract_error'])
 
     def test_configured_retention_symlink_is_preserved_and_rejected(self):
         target = self.root/'actual/output/comfy-workflow-api'

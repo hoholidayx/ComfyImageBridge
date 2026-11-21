@@ -17,7 +17,7 @@ from .api import OutputUnavailable
 from .client import APIError, png_size
 from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH, PRESETS
 from .lifecycle import BackendUnavailable
-from .retention import cleanup_lock
+from .retention import automatic_cleanup, cleanup_lock
 from .service_readiness import ready_instance
 from .sleep_cycle import SleepPending, assert_allowed
 from .storage import read_json
@@ -118,6 +118,8 @@ class ImageJobs:
         self.poll_interval = api.settings['poll_interval']
         self.reconcile_seconds = api.settings['wait_timeout']
         with self._db() as db:
+            if not db.execute('PRAGMA page_count').fetchone()[0]:
+                db.execute('PRAGMA auto_vacuum=INCREMENTAL')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS jobs (
                     task_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, request TEXT,
@@ -278,9 +280,13 @@ class ImageJobs:
         with self._db() as db:
             db.execute('UPDATE jobs SET prompt_id=? WHERE task_id=?', (prompt_id, task_id))
 
-    def _release_pin(self, backend_id):
+    def _release_pin(self, backend_id, error_code=None):
         if backend_id is not None:
             try:
+                if error_code in ('output_unavailable', 'output_invalid'):
+                    marker = self.api._directory(backend_id) / '.result-discarded'
+                    if marker.parent.is_dir():
+                        marker.touch(mode=0o600)
                 self.api.pin_result(backend_id, False)
             except OSError:
                 LOG.error('Unable to release result retention pin')
@@ -354,7 +360,9 @@ class ImageJobs:
                           WHERE task_id IN (
                             SELECT task_id FROM jobs WHERE state IN ('completed', 'failed')
                             ORDER BY ended DESC, task_id DESC LIMIT -1 OFFSET ?)""", (self.max_results,))
-        self._release_pin(backend_id)
+        self._release_pin(backend_id, code)
+        with self._db() as db:
+            db.execute('PRAGMA incremental_vacuum(256)')
 
     def _collect(self, job):
         task_id = job['task_id']
@@ -438,10 +446,10 @@ class ImageJobs:
         with (self.home / 'worker.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self._db() as db:
-                finished = db.execute("SELECT backend_id FROM jobs WHERE backend_id IS NOT NULL AND "
+                finished = db.execute("SELECT backend_id, error_code FROM jobs WHERE backend_id IS NOT NULL AND "
                                       "(state IN ('completed', 'failed', 'expired') OR next_check IS NULL)").fetchall()
             for job in finished:
-                self._release_pin(job['backend_id'])
+                self._release_pin(job['backend_id'], job['error_code'])
             # The worker may have been killed during input staging, before its temporary
             # directory was closed. Its durable input copies are still in SQLite.
             for folder in self.home.glob('submit-*'):
@@ -449,9 +457,10 @@ class ImageJobs:
                     for path in folder.glob('*.png'):
                         path.unlink()
                     folder.rmdir()
-            while not stop.is_set():
-                try:
-                    self.tick()
-                except (OSError, sqlite3.Error):
-                    LOG.error('Unable to access image job storage; the worker will retry')
-                stop.wait(self.poll_interval)
+            with automatic_cleanup(self.api):
+                while not stop.is_set():
+                    try:
+                        self.tick()
+                    except (OSError, sqlite3.Error):
+                        LOG.error('Unable to access image job storage; the worker will retry')
+                    stop.wait(self.poll_interval)

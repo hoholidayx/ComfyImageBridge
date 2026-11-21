@@ -2,10 +2,7 @@
 
 在 ComfyUI 所在的 Ubuntu 主机提供内网 MCP 生图服务。自研框架通过标准 MCP 客户端提交文生图或多图编辑任务，在后台取回 PNG，并将附件写入原会话。
 
-| 部署包 | 内容 |
-| --- | --- |
-| [ubuntu/](ubuntu/README.md) | MCP 适配、生图任务、工作流 SDK / CLI、快照和独立运维 |
-| [hermes/](hermes/README.md) | 冻结的 Hermes 插件与固定 SSH 客户端，供回退使用 |
+Ubuntu 部署包包含 MCP 服务、工作流 SDK / CLI、uni 快照与本机运维脚本。[安装与配置](ubuntu/README.md)
 
 Ubuntu 使用自己的 Python 3.12 环境和 `uv.lock`。MCP 是可选依赖，工作流 SDK / CLI 仍可单独运行。ComfyUI、模型和受保护的 GPU 依赖由原有环境和 `run_comfyui.sh` 管理。
 
@@ -24,4 +21,4 @@ Ubuntu 使用自己的 Python 3.12 环境和 `uv.lock`。MCP 是可选依赖，�
 - [故障排查](docs/troubleshooting.md)
 - [来源与许可说明](NOTICE.md)
 
-当前 Ubuntu 包版本为 **0.8.2**。Hermes 回退版本为 **0.7.2**，旧 SSH 客户端契约为 **7**。
+当前 Ubuntu 包版本为 **0.9.0**。

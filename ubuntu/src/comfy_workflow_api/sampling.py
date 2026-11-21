@@ -1,7 +1,6 @@
 """Capture the effective settings from the submitted uni graph."""
 
 NATIVE_SAMPLER = {'sampler_name': 'euler', 'scheduler': 'simple', 'denoise': 1}
-PROFILES = {preset: NATIVE_SAMPLER.copy() for preset in ('fast', 'quality')}
 
 
 def configuration(graph, request):

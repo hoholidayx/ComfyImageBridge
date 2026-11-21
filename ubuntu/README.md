@@ -1,6 +1,6 @@
 # Ubuntu：ComfyUI 工作流 SDK 与运行管理
 
-这是运行在 ComfyUI 同一台 Ubuntu 主机上的独立包。提供可选的内网 MCP 生图服务，以及 Python SDK、JSON CLI、工作流编译器、任务记录、数量清理、防睡眠和独立服务管理。接入自研框架时按 [MCP 部署与工具契约](../docs/mcp.md) 安装可选依赖。旧 [Hermes 插件](../hermes/) 与 SSH 桥留作回退。
+这是运行在 ComfyUI 同一台 Ubuntu 主机上的独立包。提供可选的内网 MCP 生图服务，以及 Python SDK、JSON CLI、工作流编译器、任务记录、数量清理、防睡眠和独立服务管理。接入自研框架时按 [MCP 部署与工具契约](../docs/mcp.md) 安装可选依赖。
 
 本包不安装 PyTorch、ROCm 或 ComfyUI，不复制模型、用户图片、历史任务、原机启动脚本，也不新增 HTTP 常驻服务。
 
@@ -64,7 +64,7 @@ uv run comfy-workflow sync-workflows
 
 `prompt` 必填，最多 8000 字符，超限报错；直接使用本 SDK/CLI 时 `seed` 默认固定 0，不随机，范围为无符号 64 位整数。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
 
-**Qwen Image 2.1 编辑重要约束：生成图再次作为参考图 edit 时，应避免复用参考图生成时的 seed。** 当前模型配置的合成图交叉对照已复现同源 seed 的纹理劣化。MCP 使用 Ubuntu 端的 SHA-256 来源索引自动避开已知冲突，Hermes 回退路径沿用其 profile 索引。直接调用 SDK / CLI 或手动使用 ComfyUI 时，请自行选择新 seed。文生图默认 seed 为 0。
+**Qwen Image 2.1 编辑重要约束：生成图再次作为参考图 edit 时，应避免复用参考图生成时的 seed。** 当前模型配置的合成图交叉对照已复现同源 seed 的纹理劣化。MCP 使用 Ubuntu 端的 SHA-256 来源索引自动避开已知冲突。直接调用 SDK / CLI 或手动使用 ComfyUI 时，请自行选择新 seed。文生图默认 seed 为 0。
 
 尺寸用 `output_size` 表达：
 
@@ -123,7 +123,7 @@ result = api.fetch(task["task_id"])
 # 可选：batches.submit(api, alias, request, count=2)，count 为 1..4，seed 递增。
 ```
 
-SDK 提供 `health`、`list_workflows`、`compile`、`submit`、`status`、`wait`、`fetch`、`run`、`cancel` 和 `cleanup`。批次逐项排队，不增大 GPU latent batch。远程桥还执行客户端哈希校验；[`config/client-contract.json`](config/client-contract.json) 由仓库发布工具生成，缺失或不匹配时拒绝远程修改操作。
+SDK 提供 `health`、`list_workflows`、`compile`、`submit`、`status`、`wait`、`fetch`、`run`、`cancel` 和 `cleanup`。批次逐项排队，不增大 GPU latent batch。
 
 ## 服务管理与恢复
 
@@ -139,7 +139,7 @@ bash scripts/comfyui-service.sh recover
 bash scripts/sleep-guard.sh status
 ```
 
-`status` 只读，不唤醒、不生成、不获取锁。`start`/`ensure_ready` 可能启动原脚本并进行真实 64×64 fast 烟测；运行中已有正常任务时不会插入烟测。HTTP 健康、端口 LISTEN、进程归属与实际 GPU 出图分别检查。恢复纪元、代码和工作流变更会使旧 ready 失效。
+`status` 只读，不唤醒、不生成、不获取锁。`start`/`ensure_ready` 可能启动原脚本并进行真实 64×64 quality 烟测；运行中已有正常任务时不会插入烟测。HTTP 健康、端口 LISTEN、进程归属与实际 GPU 出图分别检查。恢复纪元、代码和工作流变更会使旧 ready 失效。
 
 后台运行通过独立会话、nohup、`/dev/null` 输入和日志重定向脱离 SSH；记录 PID、启动标识、命令与日志。停止前验证归属、启动标识和进程组，遇到外来监听进程拒绝误杀；端口检测只认 LISTEN。普通停止保护活动生成，SIGINT 最多等待 120 秒，再自动升级 TERM/KILL；显式 recover 在确认异常与归属后按恢复策略处理，不再要求手动确认命令。SIGKILL 后仍不退出时报告可能的驱动等待，不反复重启或擅自重启主机。
 
@@ -153,7 +153,8 @@ data/
 ├── runs/<task_id>/       # 请求、快照、执行图、提交回执、历史、结果、日志、outputs/
 ├── batches/<task_id>/
 ├── comfyui-service/     # 服务状态、日志与烟测记录
-├── runtime-operations/  # 有界远程管理操作的回执和 worker 日志
+├── mcp-service/        # MCP 进程状态和日志
+├── image-jobs/         # MCP 请求、图片与 seed 来源的 SQLite 数据库
 └── sleep-guard/         # supervisor、lease、运行观测
 ```
 
@@ -166,7 +167,15 @@ uv run comfy-workflow cleanup --dry-run
 uv run comfy-workflow cleanup
 ```
 
-数量上限针对符合条件的结束生成任务，不是整个 data 目录的总文件上限；服务、批次与管理操作的审计记录不按此数量删除。生成流程会自动执行清理，不另外安装定时服务。
+| 范围 | 默认策略 |
+| --- | --- |
+| SDK 任务 | 最近 100 个可清理的终态任务。一起清理请求、执行图、输出及该任务在 ComfyUI 专用目录下的输入输出。活动任务、待核实提交、未取图及固定中的 SDK 结果均保留。MCP 已最终判定无法交付的结果可以清理。 |
+| MCP 数据库 | 保留最近 100 个完成或失败任务的结果，淘汰 PNG、结果正文和已提交的参考图。保留 ID 和指纹防重提，保留 SHA-256 与 seed 作来源校验。这两类小记录随使用增长。SQLite 重用空闲页，新建库还启用增量空间回收。 |
+| 批次与实例回执 | 子任务均已清理的批次、无现存任务引用的已退役服务实例，各保留最近 100 份。 |
+| 普通日志 | MCP、ComfyUI、预检、防睡眠、清理日志及任务日志，每份 8 MiB，每个日志保留 3 份归档。轮转保留当前文件的 inode，持续写入的进程可继续使用已打开的描述符。每次归档最近一个分片，检查间隔内允许临时超限。复制并截短的瞬间可能丢失并发写入的少量日志。 |
+| 其他 | 就绪烟测按最近 10 份管理。硬件监控已发送邮件保留 30 天，内核去重游标保留 7 天。监控标准输出由系统 journal 管理。人工保存的验收报告、图片及旧版运维回执由维护者管理。 |
+
+`retention.auto_cleanup` 默认开启。MCP 工作进程启动时执行维护，随后每 5 分钟检查一次，即使没有成功任务也会执行。SDK 成功取图也会触发任务数量清理。关闭 `auto_cleanup` 可停用自动文件维护，MCP 数据库仍按 `max_tasks` 淘汰图片。只运行 SDK 或停用 MCP 时，可用上方 CLI 执行完整维护。队列不可读取时推迟任务删除，本机日志仍可轮转。配置项见[配置说明](../docs/configuration.md)。
 
 防睡眠 supervisor 使用真实 GNOME 锁，保护排队、生成与管理操作。lease 与持有进程身份绑定，结束后释放；队列空且无 lease 后等待宽限期释放锁。长龄 lease 只报警；网络异常或指标不可读时保守保留，不能按时间强行放睡。
 

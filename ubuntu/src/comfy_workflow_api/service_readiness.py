@@ -1,6 +1,7 @@
 """Read-only readiness evidence for the locally managed ComfyUI instance."""
 
 from datetime import datetime
+import importlib.util
 import hashlib
 import json
 import os
@@ -206,3 +207,10 @@ def ready_instance(api):
         return instance if health(Client(configured, timeout=2))['http_healthy'] else None
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
         return None
+
+
+def manager_for(root):
+    spec = importlib.util.spec_from_file_location('managed_comfyui_service', root/'scripts/comfyui-service.py')
+    manager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(manager)
+    return manager

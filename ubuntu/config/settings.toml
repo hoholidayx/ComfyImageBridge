@@ -19,6 +19,8 @@ uv_bin = ""
 [retention]
 max_tasks = 100
 auto_cleanup = true
+log_max_bytes = 8388608
+log_backups = 3
 # Empty: derive from service.comfy_dir; cleanup is confined to these namespaces.
 comfy_output_dir = ""
 comfy_input_dir = ""

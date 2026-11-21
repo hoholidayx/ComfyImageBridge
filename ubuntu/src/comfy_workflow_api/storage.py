@@ -1,8 +1,16 @@
 import json
 import os
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def is_job_id(name):
+    try:
+        return str(uuid.UUID(name)) == name
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def now():
@@ -13,9 +21,10 @@ def read_json(path):
     return json.loads(Path(path).read_text())
 
 
-def write_json(path, value):
+def write_json(path, value, *, create_parent=True):
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".write-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:

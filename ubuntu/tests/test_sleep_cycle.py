@@ -202,59 +202,6 @@ class SleepCycleTest(unittest.TestCase):
             time.sleep(.01)
         self.assertTrue(path.exists(), 'Child did not reach its bounded barrier')
 
-    def test_delayed_real_worker_cannot_acquire_lease_after_completed_sleep(self):
-        environment = self.prepare_child_root(enabled_guard=True)
-        operation = '12345678-1234-4234-8234-123456789abc'
-        directory = self.api.data/'runtime-operations'/operation
-        write_json(directory/'request.json', {'action': 'stop'})
-        script = '''
-import json, os, sys, time
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
-from comfy_workflow_api import sleep_cycle, sleep_guard, runtime_operation_worker as worker
-root = Path(sys.argv[1])
-sleep_cycle.boot_id = lambda: 'boot'
-first = True
-def status():
-    global first
-    if first:
-        first = False
-        (root/'worker-waiting').touch()
-        deadline = time.monotonic()+8
-        while not (root/'worker-release').exists():
-            if time.monotonic() >= deadline: raise TimeoutError('worker barrier')
-            time.sleep(.01)
-    return {'ready': False, 'service_instance_id': 'synthetic', 'queue': {}}
-def execute(*args, **kwargs):
-    (root/'unsafe-mutation').touch()
-    return {'ready': False}
-manager = SimpleNamespace(status=status, execute=execute)
-with patch.object(worker, 'manager_for', return_value=manager), \
-     patch.object(worker, 'meta_for', return_value={'stale_copy': False}), \
-     patch.object(sleep_guard, 'matches', return_value=True), \
-     patch.object(sleep_guard, 'start', side_effect=lambda api: (root/'unsafe-inhibitor').touch()), \
-     patch.object(sleep_guard, 'status', return_value={}):
-    print(json.dumps(worker.execute(root, sys.argv[2])))
-'''
-        process = subprocess.Popen([sys.executable, '-c', script, str(self.api.root), operation],
-                                   env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
-        self.addCleanup(lambda: process.kill() if process.poll() is None else None)
-        write_json(directory/'receipt.json', {'worker': {'pid': process.pid},
-                                              'admission_epoch': cycle.admission_epoch(self.api)})
-        self.wait_child_marker(process, self.api.root/'worker-waiting')
-        result = cycle.pre(self.api, self.manager)
-        cycle.finalize(self.api, self.manager, result['cycle_token'])
-        (self.api.root/'worker-release').touch()
-        output, errors = process.communicate(timeout=10)
-        self.assertEqual(process.returncode, 0, output+errors)
-        response = json.loads(output)
-        self.assertEqual(response['error']['type'], 'SleepPending')
-        self.assertFalse((self.api.root/'unsafe-mutation').exists())
-        self.assertFalse((self.api.root/'unsafe-inhibitor').exists())
-        self.assertFalse(list((self.api.data/'sleep-guard/leases').glob('*.json')))
-
     def test_old_boot_dispatch_epoch_cannot_create_a_lease(self):
         epoch = cycle.admission_epoch(self.api)
         with patch.object(cycle, 'boot_id', return_value='new-boot'), patch.object(sleep_guard, 'start') as start:
@@ -403,15 +350,6 @@ queue_ids = manager.queue_ids
             start.assert_not_called()
         self.assertFalse(list((self.api.data/'comfyui-service/inflight').glob('*.json')))
         self.assertFalse(list((self.api.data/'sleep-guard/leases').glob('*.json')))
-
-    def test_public_runtime_packet_cannot_authorize_itself_with_a_token(self):
-        from comfy_workflow_api import runtime_bridge
-        self.record()
-        packet = {'action': 'ensure_ready', 'cycle_token': 'token', 'operation_id': 'operation'}
-        with patch.object(runtime_bridge.subprocess, 'Popen') as spawn:
-            with self.assertRaises(cycle.SleepPending):
-                runtime_bridge.launch(self.api, self.api.root, packet, {})
-            spawn.assert_not_called()
 
     def test_direct_manager_stop_obeys_gate_before_sending_signals(self):
         path = Path(__file__).parents[1]/'scripts/comfyui-service.py'

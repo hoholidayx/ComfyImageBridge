@@ -14,6 +14,7 @@ from .client import APIError, Client, png_size
 from .compiler import UNIFIED_WORKFLOW, WORKFLOWS, compile_graph, digest, topology
 from .storage import now, read_json, write_json
 from .retention import cleanup as cleanup_tasks, cleanup_lock, result_pin
+from .log_retention import record_cleanup
 from .contract import normalize
 from .metadata import backend_metadata
 from .sampling import configuration as sampling_configuration
@@ -370,8 +371,7 @@ class WorkflowAPI:
                 except Exception as exc:
                     # A cleanup problem must not hide a successfully downloaded image.
                     result['cleanup'] = {'error': str(exc)}
-                    with (self.data / 'cleanup.log').open('a') as stream:
-                        stream.write(json.dumps({'time': now(), 'error': str(exc)}) + '\n')
+                    record_cleanup(self.data, {'error': str(exc)})
             yield result
 
     def cleanup(self, dry_run=False):

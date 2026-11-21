@@ -29,7 +29,7 @@ def submit(api, alias, request, count=1):
     batch = {'task_id': task_id, 'workflow': alias, 'state': 'submitting', 'count': count,
              'created_at': now(), 'children': [], 'request_used': effective,
              'seed_used': effective['seed'], 'metadata': backend_metadata()}
-    write_json(folder/'batch.json', batch)
+    write_json(folder/'batch.json', batch, create_parent=False)
     for index in range(count):
         child_request = {**copy.deepcopy(effective), 'seed': effective['seed'] + index}
         try:
@@ -41,9 +41,9 @@ def submit(api, alias, request, count=1):
                 batch['children'].append({'task_id': match.group(1), 'seed_used': child_request['seed'], 'state': 'submission_uncertain'})
             batch['submission_error'] = str(exc)
             batch['submission_stopped'] = True
-            write_json(folder/'batch.json', batch)
+            write_json(folder/'batch.json', batch, create_parent=False)
             break  # never submit remaining children after an uncertain response
-        write_json(folder/'batch.json', batch)
+        write_json(folder/'batch.json', batch, create_parent=False)
     try:
         return status(api, task_id)
     except Exception as exc:
@@ -81,7 +81,7 @@ def status(api, task_id):
     batch.update(observed_at=now(), elapsed_seconds=round(seconds(batch['created_at']), 3),
                  stalled=True if any(c.get('stalled') is True for c in batch['children']) else None if any(c.get('stalled') is None for c in batch['children']) else False)
     batch['updated_at'] = now()
-    write_json(folder/'batch.json', batch)
+    write_json(folder/'batch.json', batch, create_parent=False)
     return batch
 
 
@@ -95,7 +95,7 @@ def fetch(api, task_id):
             for output in result['outputs']:
                 outputs.append({**output, 'seed_used': child['seed_used'], 'child_task_id': child['task_id']})
     batch.update(outputs=outputs, metadata=backend_metadata(), cleanup={'max_tasks': api.settings['retention']['max_tasks']})
-    write_json(directory(api, task_id)/'result.json', batch)
+    write_json(directory(api, task_id)/'result.json', batch, create_parent=False)
     return batch
 
 
@@ -104,7 +104,7 @@ def cancel(api, task_id):
     folder = directory(api, task_id)
     batch = read_json(folder/'batch.json')
     batch['cancel_requested_at'] = now()
-    write_json(folder/'batch.json', batch)
+    write_json(folder/'batch.json', batch, create_parent=False)
     from .task_diagnostics import TERMINAL
     for child in batch['children']:
         if child.get('state') not in TERMINAL:
@@ -113,5 +113,5 @@ def cancel(api, task_id):
                 child.update(state=result['state'], cancel_dispatched=result.get('cancel_dispatched'))
             except Exception as exc:
                 child['cancel_error'] = str(exc)
-            write_json(folder/'batch.json', batch)
+            write_json(folder/'batch.json', batch, create_parent=False)
     return status(api, task_id)

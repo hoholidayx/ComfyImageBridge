@@ -48,6 +48,13 @@ def load_settings(root):
     comfy, _, _ = service_paths(root, settings)
     settings['data_dir'] = str(resolve_path(settings.get('data_dir', 'data'), root))
     retention = settings.setdefault('retention', {})
+    for key, default in (('max_tasks', 100), ('log_max_bytes', 8 * 1024**2), ('log_backups', 3)):
+        value = retention.setdefault(key, default)
+        if type(value) is not int or value < 1:
+            raise ValueError(f'retention.{key} must be a positive integer')
+    retention.setdefault('auto_cleanup', True)
+    if type(retention['auto_cleanup']) is not bool:
+        raise ValueError('retention.auto_cleanup must be a boolean')
     for kind in ('output', 'input'):
         key = f'comfy_{kind}_dir'
         path = Path(retention.get(key) or comfy/kind/'comfy-workflow-api').expanduser()

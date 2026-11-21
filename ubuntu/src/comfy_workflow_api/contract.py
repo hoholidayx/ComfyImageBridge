@@ -1,4 +1,4 @@
-"""Stable generation presets shared by the SDK and Hermes bridge."""
+"""Stable generation presets shared by the SDK and MCP service."""
 import copy
 
 DEFAULT_PRESET = 'quality'
@@ -7,8 +7,7 @@ PRESETS = {
     'qwen-image-2.1-t2i': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
     'qwen-image-2.1-edit': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
 }
-CONTRACT_VERSION = 7
-VERSION = '0.8.2'
+VERSION = '0.9.0'
 MAX_PROMPT_LENGTH = 8000
 
 

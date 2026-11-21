@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 from comfy_workflow_api.client import APIError, Client, png_size
 from comfy_workflow_api.compiler import compile_graph
+from comfy_workflow_api.retention import prune_probes
 from comfy_workflow_api import service_readiness
 from comfy_workflow_api.service_readiness import (
     boot_id, group, instance_id, known_members as _known_members,
@@ -546,18 +547,8 @@ def _smoke(cold=False):
     if instance_id(state) == receipt['service_instance_id']:
         state.update(service_instance_id=receipt['service_instance_id'], verification=receipt)
         write_json(STATE, state)
-    # Retain only this private namespace; no user task/output cleanup is performed here.
-    folders = sorted((DATA/'health').iterdir(), key=lambda p:p.stat().st_mtime, reverse=True)
-    import shutil
-    for expired in folders[10:]:
-        if expired.is_dir() and (expired/'receipt.json').exists():
-            old = read_json(expired/'receipt.json')
-            if old.get('success'):
-                server_dir = COMFY/'output/comfy-workflow-api/health'/expired.name
-                if server_dir.is_dir() and server_dir.name == expired.name:
-                    shutil.rmtree(server_dir)
-            shutil.rmtree(expired)
     result = status()
+    prune_probes(DATA/'health', COMFY/'output/comfy-workflow-api/health', queue_ids(result))
     result['smoke'] = receipt
     if not receipt['success']:
         result.update(ready=False, healthy=False, smoke_failed=True)

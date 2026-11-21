@@ -363,7 +363,7 @@ def _shutdown_never_started(value, current):
 
 def main():
     from .api import WorkflowAPI
-    from .runtime_bridge import manager_for
+    from .service_readiness import manager_for
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--token')

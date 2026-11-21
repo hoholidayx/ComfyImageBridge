@@ -73,7 +73,6 @@ def verify():
             raise AssertionError('guard state timed out: '+json.dumps(current))
 
         try:
-            # Each call runs in a short-lived separate process, as Hermes does over SSH.
             with ThreadPoolExecutor(max_workers=3) as pool:
                 results = list(pool.map(lambda _: child("print(json.dumps(api.submit('qwen-image-2.1-t2i', {'prompt':'geometric verification', 'output_size':{'mode':'explicit','width':512,'height':512}})))"), range(3)))
             submissions = [json.loads(result.stdout) for result in results]

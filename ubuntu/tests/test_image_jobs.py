@@ -71,14 +71,14 @@ class ImageJobsTest(unittest.TestCase):
         root = Path(temporary.name).resolve()
         for name in ('config', 'workflows'):
             shutil.copytree(ROOT / name, root / name)
-        client_contract = root / 'config/client-contract.json'
-        client_contract.unlink()
         path = root / 'config/settings.toml'
         path.write_text(path.read_text().replace('enabled = true', 'enabled = false'))
         self.client = FakeComfyUI()
         self.api = WorkflowAPI(root, client=self.client)
         self.api.settings['poll_interval'] = 0
         self.api.settings['retention']['max_tasks'] = 1
+        for kind in ('input', 'output'):
+            self.api.settings['retention'][f'comfy_{kind}_dir'] = str(root/'ComfyUI'/kind/'comfy-workflow-api')
         self.ready = True
         self.jobs = self.reopen()
 
@@ -228,6 +228,28 @@ class ImageJobsTest(unittest.TestCase):
         self.assertEqual(self.client.downloads, 1)
         self.assertFalse((backend / '.result-pinned').exists())
 
+    def test_expired_png_releases_payload_and_preserves_replay_and_seed(self):
+        first = self.submit(seed='21')
+        self.jobs.tick()
+        self.client.complete()
+        self.jobs.tick()
+        second = self.submit(seed='22')
+        self.jobs.tick()
+        self.client.complete()
+        self.jobs.tick()
+        metadata, _ = self.jobs.result(second)
+        with self.jobs._db() as db:
+            self.assertEqual(db.execute('PRAGMA auto_vacuum').fetchone()[0], 2)
+            old = db.execute('SELECT state, png, request, result FROM jobs WHERE task_id=?', (first,)).fetchone()
+            self.assertEqual(tuple(old), ('expired', None, None, None))
+            seeds = {row[0] for row in db.execute('SELECT seed FROM image_seeds WHERE sha256=?', (metadata['sha256'],))}
+            self.assertEqual(seeds, {'21', '22'})
+        self.assertEqual(self.reopen().submit(first, 'A geometric robot', seed='21')['state'], 'expired')
+        with self.assertRaises(ImageJobError) as expired:
+            self.jobs.result(first)
+        self.assertEqual(expired.exception.code, 'result_expired')
+        self.assertEqual(len(self.client.posts), 2)
+
     def test_missing_output_fails_without_repeating_the_post(self):
         for with_output, error in ((False, None), (True, APIError(404, 'gone')), (True, TimeoutError())):
             with self.subTest(error=error):
@@ -240,6 +262,7 @@ class ImageJobsTest(unittest.TestCase):
                 self.assertEqual(self.jobs.status(task_id)['error_code'], 'output_unavailable')
                 self.assertFalse(self.jobs.tick())
         self.assertEqual(len(self.client.posts), 3)
+        self.assertEqual(len(self.api.cleanup()['task_ids']), 2)
 
 
 if __name__ == '__main__':

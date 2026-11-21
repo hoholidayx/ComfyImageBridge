@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Verify the Ubuntu MCP release and the frozen Hermes rollback offline."""
+"""Verify the Ubuntu SDK, MCP client and release offline."""
 import argparse
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -22,18 +21,12 @@ def main():
     if not uv:
         parser.error("uv not found; install/configure uv or supply --uv")
     offline = ["--offline"] if args.offline else []
-    for package in ("ubuntu", "hermes"):
-        print(f"Checking {package}: locked environment and offline unit tests", flush=True)
-        extras = ["--extra", "mcp"] if package == "ubuntu" else []
-        subprocess.run([uv, "sync", "--project", str(root / package), "--locked", *extras, *offline], check=True)
-        subprocess.run([uv, "run", "--project", str(root / package), "--no-sync", *offline,
-                        "python", str(root / package / "scripts/check.py")], cwd=root, check=True)
-    environment = dict(os.environ)
-    # Cross-package tests use the Ubuntu package without installing it in Hermes.
-    environment["PYTHONPATH"] = str(root / "ubuntu/src")
-    subprocess.run([uv, "run", "--project", str(root / "ubuntu"), "--no-sync", *offline,
-                    "python", "-m", "unittest", "discover", "-s", str(root / "tests"), "-v"],
-                   cwd=root, env=environment, check=True)
+    project = str(root / "ubuntu")
+    subprocess.run([uv, "sync", "--project", project, "--locked", "--extra", "mcp", *offline], check=True)
+    python = [uv, "run", "--project", project, "--no-sync", *offline, "python"]
+    subprocess.run([*python, str(root / "ubuntu/scripts/check.py")], cwd=root, check=True)
+    subprocess.run([*python, "-m", "unittest", "discover", "-s", str(root / "tests"), "-v"],
+                   cwd=root, check=True)
     print("Release checks passed; no live SSH, wake or generation operations were performed.", flush=True)
     return 0
 
