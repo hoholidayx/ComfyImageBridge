@@ -15,7 +15,7 @@ import uuid
 
 from .api import OutputUnavailable
 from .client import APIError, png_size
-from .contract import MAX_PROMPT_LENGTH, PRESETS
+from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH, PRESETS
 from .lifecycle import BackendUnavailable
 from .retention import cleanup_lock
 from .service_readiness import ready_instance
@@ -177,8 +177,8 @@ class ImageJobs:
         return result
 
     @staticmethod
-    def _existing(row, fingerprint):
-        if row['fingerprint'] != fingerprint:
+    def _existing(row, fingerprints):
+        if row['fingerprint'] not in fingerprints:
             raise ImageJobError('request_conflict', 'Request ID was used with different image parameters')
         return ImageJobs._public(row)
 
@@ -200,28 +200,34 @@ class ImageJobs:
             return bool(self.readiness())
         return instance_id is not None and ready_instance(self.api) == instance_id
 
-    def submit(self, request_id, prompt, preset='fast', size='auto', seed=None, images=()):
+    def submit(self, request_id, prompt, preset=None, size='auto', seed=None, images=()):
         task_id = _task_id(request_id)
         images = tuple(images)
-        request = json.dumps(_request(prompt, preset, size, seed, images), sort_keys=True)
+        payload = _request(prompt, DEFAULT_PRESET if preset is None else preset, size, seed, images)
+        request = json.dumps(payload, sort_keys=True)
         fingerprint = hashlib.sha256(request.encode()).hexdigest()
+        fingerprints = {fingerprint}
+        if preset is None:
+            # Before 0.8.1 an omitted preset was persisted as fast.
+            legacy = json.dumps({**payload, 'preset': 'fast'}, sort_keys=True)
+            fingerprints.add(hashlib.sha256(legacy.encode()).hexdigest())
         with self._db() as db:
             row = self._find(db, task_id)
         if row is not None:
-            return self._existing(row, fingerprint)
+            return self._existing(row, fingerprints)
         try:
             self._check_ready()
         except ImageJobError:
             with self._db() as db:
                 row = self._find(db, task_id)
             if row is not None:
-                return self._existing(row, fingerprint)
+                return self._existing(row, fingerprints)
             raise
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
             row = self._find(db, task_id)
             if row is not None:
-                return self._existing(row, fingerprint)
+                return self._existing(row, fingerprints)
             pending = db.execute('SELECT count(*) FROM jobs WHERE state IN (?, ?, ?, ?, ?) AND next_check IS NOT NULL',
                                  ACTIVE).fetchone()[0]
             if pending >= self.max_pending:

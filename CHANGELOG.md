@@ -1,5 +1,9 @@
 # 变更记录
 
+## 0.8.1 · 默认 uni quality 40 步
+
+Ubuntu MCP 和 SDK 的文生图、参考图编辑均默认使用 uni 的基础模型分支，Euler/simple、40 步、CFG 1。显式 fast 继续使用 6 步加速 LoRA。
+
 ## Ubuntu 0.8.0 · 内网 MCP 生图
 
 - 提供独立的 MCP 生图提交、状态查询和 PNG 结果接口。每个任务生成一张图，编辑可附有序参考图。

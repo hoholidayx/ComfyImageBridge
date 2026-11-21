@@ -57,10 +57,10 @@ uv run comfy-workflow sync-workflows
 
 | preset | 步数 / LoRA | 采样行为 |
 | --- | --- | --- |
-| `fast`（默认） | 6 步，启用 LoRA | Euler，Pruna v0.2 的自定义 sigma 序列与分辨率偏移 |
-| `quality` | 25 步，不启用 LoRA | Euler / simple，沿用已选定的 ComfyUI 官方模板参数 |
+| `fast` | 6 步，启用 LoRA | Euler，Pruna v0.2 的自定义 sigma 序列与分辨率偏移 |
+| `quality`（默认） | 40 步，不启用 LoRA | Euler / simple，使用 uni 工作流的基础模型分支 |
 
-文生图和编辑的 quality 当前均为 25 步。fast 不使用 quality 的 simple 调度；实际 `sampling_config` 会写入 receipt。CFG 固定为 1、负向提示词必须为空，其他组合因既有实测不稳定而拒绝。步数由 preset 固定，不能任意指定。
+文生图和编辑的 quality 当前均为 40 步。fast 不使用 quality 的 simple 调度；实际 `sampling_config` 会写入 receipt。CFG 固定为 1、负向提示词必须为空，其他组合因既有实测不稳定而拒绝。步数由 preset 固定，不能任意指定。
 
 `prompt` 必填，最多 8000 字符，超限报错；直接使用本 SDK/CLI 时 `seed` 默认固定 0，不随机，范围为无符号 64 位整数。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
 

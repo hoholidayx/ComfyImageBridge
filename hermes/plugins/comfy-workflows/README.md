@@ -17,7 +17,7 @@
 | 参数 | 默认与约束 |
 |---|---|
 | prompt | 必填，非空，最多8000字符，超限报错 |
-| preset | 默认fast：LoRA/6步/Pruna自定义sigmas；仅用户明确要求时选择quality：无LoRA/25步/Euler simple |
+| preset | 默认fast：LoRA/6步/Pruna自定义sigmas；仅用户明确要求时选择quality：无 LoRA、Euler/simple，Ubuntu 0.8.1 为 40 步 |
 | images | 可省略或传空数组，有序0–10张本机PNG或图片ID；有编辑底图时将其放在第1项 |
 | size | auto：编辑 latent 跟随第一张参考图处理后的尺寸、文生图1024×1024；支持明确指定比例或WxH |
 | title | 可选，最多80字符，描述生成意图，非视觉核验结论 |

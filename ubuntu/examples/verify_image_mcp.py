@@ -63,7 +63,7 @@ async def inventory(connection):
         require("n" not in properties, "The submit tool exposes an image count")
         await expect_error(client, "image_status", {"task_id": str(uuid4())}, "task_not_found")
         emit(tools=sorted(TOOLS), unknown_task="task_not_found")
-        return properties
+        return tools["image_submit"]
 
 
 async def verify_job(connection, directory, request, *, label, size, wait_seconds):
@@ -121,11 +121,12 @@ async def verify_job(connection, directory, request, *, label, size, wait_second
 
 
 async def run(connection, args):
-    properties = await inventory(connection)
+    schema = await inventory(connection)
+    properties = schema["properties"]
     if not args.generate:
         return
     require(not args.edit or "images" in properties, "This endpoint does not support reference images")
-    options = {"preset": "fast"}
+    options = {"preset": "quality"} if "preset" in schema.get("required", []) else {}
     size = None
     if args.size:
         options["size"] = args.size

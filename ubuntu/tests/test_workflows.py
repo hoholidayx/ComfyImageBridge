@@ -81,12 +81,12 @@ class WorkflowsTest(unittest.TestCase):
 
     def test_t2i_uses_edit_graph_and_injects_parameters(self):
         request = self.request("t2i.json")
-        request.update(prompt="NEW PROMPT", seed=123, preset='quality', steps=25)
+        request.update(prompt="NEW PROMPT", seed=123, preset='quality', steps=40)
         graph = self.api.compile("qwen-image-2.1-t2i", request)["prompt"]
         self.assertFalse(any(n["class_type"] in ("LoadImage", "TextGenerate") for n in graph.values()))
         self.assertEqual(graph["474"]["inputs"]["prompt"], "NEW PROMPT")
         self.assertEqual(graph["458"]["inputs"]["seed"], 123)
-        self.assertEqual(graph["458"]["inputs"]["steps"], 25)
+        self.assertEqual(graph["458"]["inputs"]["steps"], 40)
         self.assertFalse(graph['485']['inputs']['switch'])
 
     def test_shared_loaders_and_stable_lora_branch(self):
@@ -100,12 +100,12 @@ class WorkflowsTest(unittest.TestCase):
             self.assertEqual(fast[node], edit[node])
         self.assertEqual(fast['458']['class_type'], 'SamplerCustom')
         self.assertEqual(fast['pruna_sigmas']['inputs']['nodes'], '1.0, 0.925, 0.85, 0.625, 0.375, 0.125')
-        self.assertEqual(plain['458']['inputs']['steps'], 25)
+        self.assertEqual(plain['458']['inputs']['steps'], 40)
         self.assertFalse(plain['485']['inputs']['switch'])
 
     def test_presets_compile_correctly_for_both_workflows(self):
-        for alias, example, quality_steps in (('qwen-image-2.1-t2i','t2i.json',25),
-                                             ('qwen-image-2.1-edit','edit-single.json',25)):
+        for alias, example, quality_steps in (('qwen-image-2.1-t2i','t2i.json',40),
+                                             ('qwen-image-2.1-edit','edit-single.json',40)):
             for preset, steps, lora in (('fast',6,True),('quality',quality_steps,False)):
                 request={**self.request(example),'preset':preset}
                 graph=self.api.compile(alias,request,ROOT/'examples')['prompt']
@@ -118,7 +118,7 @@ class WorkflowsTest(unittest.TestCase):
                 if preset=='quality':
                     expected=read_json(ROOT/'workflows/reference/comfy-quality.json')['workflows'][alias]['sampling']
                     actual={key:graph['458']['inputs'][key] for key in expected}
-                    self.assertEqual(actual,expected)
+                    self.assertEqual(actual, {**expected, 'steps': quality_steps})
 
     def test_fast_schedule_uses_actual_output_latent_and_original_model_branch(self):
         for alias,example in [('qwen-image-2.1-t2i','t2i.json'),('qwen-image-2.1-edit','edit-single.json')]:
@@ -160,18 +160,18 @@ class WorkflowsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Unsupported fast LoRA'):
             compile_graph('qwen-image-2.1-t2i',snapshot,self.request('t2i.json'))
 
-    def test_quality_edit_batch_preserves_25_in_children_and_receipts(self):
+    def test_quality_edit_batch_preserves_40_in_children_and_receipts(self):
         request={**self.request('edit-single.json'),'preset':'quality','seed':0}
         batch=self.api.submit_batch('qwen-image-2.1-edit',request,count=2,request_dir=ROOT/'examples')
-        self.assertEqual(batch['request_used']['steps'],25)
+        self.assertEqual(batch['request_used']['steps'],40)
         for index, child in enumerate(batch['children']):
             directory=self.api._directory(child['task_id'])
             state=read_json(directory/'task.json')
             effective=read_json(directory/'effective-request.json')
             graph=read_json(directory/'prompt.json')
-            self.assertEqual(state['request_used']['steps'],25)
-            self.assertEqual((effective['steps'],effective['seed'],effective['use_lora']),(25,index,False))
-            self.assertEqual(graph['458']['inputs']['steps'],25)
+            self.assertEqual(state['request_used']['steps'],40)
+            self.assertEqual((effective['steps'],effective['seed'],effective['use_lora']),(40,index,False))
+            self.assertEqual(graph['458']['inputs']['steps'],40)
             self.assertFalse(graph['485']['inputs']['switch'])
 
     def test_bad_request_does_not_create_task(self):

@@ -26,7 +26,7 @@ import uvicorn
 
 from .api import WorkflowAPI
 from .client import png_size
-from .contract import MAX_PROMPT_LENGTH, VERSION
+from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH, VERSION
 from .image_jobs import (
     ImageJobs, ImageJobError, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE, MAX_IMAGE_TOTAL_BYTES, MAX_IMAGES,
 )
@@ -45,7 +45,7 @@ class _Arguments(BaseModel):
 class _SubmitArguments(_Arguments):
     request_id: str = Field(pattern=UUID_PATTERN, description='Stable UUID assigned by the host.')
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
-    preset: Literal['fast', 'quality'] = 'fast'
+    preset: Literal['fast', 'quality'] = DEFAULT_PRESET
     size: str = Field(default='auto', max_length=16, description='auto, WxH or a supported aspect ratio.')
     seed: str | None = Field(default=None, pattern=r'^[0-9]{1,20}$', description='Optional uint64 decimal text.')
     images: list[str] = Field(default_factory=list, max_length=MAX_IMAGES, description='Ordered base64 PNGs supplied by the host.')
@@ -130,7 +130,8 @@ def create_app(jobs, *, host, port):
     def submit(args):
         request = _SubmitArguments.model_validate(args)
         images = _decode_pngs(request.images)
-        return _structured(jobs.submit(request.request_id, request.prompt, request.preset,
+        return _structured(jobs.submit(request.request_id, request.prompt,
+                                       request.preset if 'preset' in request.model_fields_set else None,
                                        request.size, request.seed, images))
 
     def status(args):

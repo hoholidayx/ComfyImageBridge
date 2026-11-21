@@ -39,7 +39,7 @@ class FakeAPI:
 class PresetTest(unittest.TestCase):
     def test_defaults_and_disabled_controls(self):
         self.assertEqual(normalize({'prompt': 'x'})['seed'], 0)
-        for preset, steps, lora in (('fast', 6, True), ('quality', 25, False)):
+        for preset, steps, lora in (('fast', 6, True), ('quality', 40, False)):
             result = normalize({'prompt': 'x', 'preset': preset})
             self.assertEqual((result['steps'], result['use_lora'], result['cfg'], result['negative_prompt']), (steps, lora, 1, ''))
         for override in ({'steps': 7}, {'steps': 25}, {'cfg': 2}, {'negative_prompt': 'bad hands'}, {'preset': 'quality', 'use_lora': True}):
@@ -51,16 +51,16 @@ class PresetTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize({'prompt': '字'*8001})
 
-    def test_quality_steps_follow_comfy_templates_and_reject_custom_overrides(self):
-        for alias, steps in (('qwen-image-2.1-t2i',25),('qwen-image-2.1-edit',25)):
+    def test_quality_steps_default_to_forty_and_reject_custom_overrides(self):
+        for alias, steps in (('qwen-image-2.1-t2i',40),('qwen-image-2.1-edit',40)):
             quality=normalize({'prompt':'x','preset':'quality'},alias)
             self.assertEqual((quality['steps'],quality['use_lora']),(steps,False))
             self.assertEqual(normalize(quality,alias),quality)
-            self.assertEqual(normalize({'prompt':'x'},alias)['steps'],6)
-            wrong=40 if steps==25 else 25
+            self.assertEqual(normalize({'prompt':'x'},alias)['steps'],40)
+            wrong=25
             with self.assertRaisesRegex(ValueError,f'{steps} steps'):
                 normalize({'prompt':'x','preset':'quality','steps':wrong},alias)
-        self.assertEqual(normalize({'prompt':'x','preset':'quality','images':['reference.png']})['steps'],25)
+        self.assertEqual(normalize({'prompt':'x','preset':'quality','images':['reference.png']})['steps'],40)
 
     def test_count_seeds_partial_failure_and_no_resubmission(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,5 +1,11 @@
 # Ubuntu MCP 上线与实机验收
 
+## 2026-11-21 · uni 默认 quality 实机验收
+
+Ubuntu Bridge 0.8.1 使用同一个 uni 快照，客户端两次都省略 `preset`。从 MCP 提交到取回 512×512 PNG，文生图耗时 10.19 秒。用第一张作为唯一参考图，编辑耗时 18.21 秒。编辑保留红方块和蓝球，将白色背景改为黄色。两张图均已解码，并核对重复取图的 SHA-256。
+
+两条 ComfyUI 执行记录均使用 Qwen Image 2.1 INT8、KSampler、Euler/simple、40 步、CFG 1，模型分支关闭加速 LoRA，图中没有 ViggleTurboSigmas。编辑执行记录包含一个 LoadImage 节点。此次通过 Ubuntu 回环地址访问 MCP，部署配置暂时关闭 GNOME 防睡眠组件。
+
 ## 2026-11-13 独立客户端复验
 
 从 Mac 通过 Streamable HTTP 直连 Ubuntu 上的 Comfy MCP 0.8.0，使用合成几何素材。Ubuntu 部署文件与仓库版本核对一致，实际配置单独保留。ComfyUI 0.44.0 使用 AMD Radeon RX 7900 XTX 和 ROCm。手动启动的终端实例退出后，项目管理器通过原启动脚本启动 ComfyUI，渲染就绪烟测通过。独立 SSH 连接确认 MCP 和 ComfyUI 后台 PID、监听归属及日志，生成结束后队列为空。

@@ -58,7 +58,7 @@ sequenceDiagram
 
 ## 参数与快照
 
-两种别名指向相同的当前工作流拓扑。编译器根据是否存在参考图移除未使用入口，根据 preset 切换 LoRA 和采样通路；保留已经验证的模型配置。quality 为 25 步 Euler/simple；fast 为 6 步 Euler/Pruna 自定义 sigmas；始终 CFG=1、负向为空。
+两种别名指向相同的当前工作流拓扑。编译器根据是否存在参考图移除未使用入口，根据 preset 切换 LoRA 和采样通路；保留已经验证的模型配置。默认 quality 为 40 步 Euler/simple；fast 为 6 步 Euler/Pruna 自定义 sigmas；始终 CFG=1、负向为空。
 
 编辑 `size=auto` 从客户端任务到后台 worker 始终保持 `follow_image`，由服务端编码器按第一张参考图处理后的尺寸提供采样 latent；fast 的 sigma 分辨率偏移也读取同一 latent。客户端不把原始 PNG 的宽高改写为显式输出尺寸。明确指定的比例或宽高使用独立尺寸分支。
 

@@ -104,6 +104,12 @@ class ImageJobsTest(unittest.TestCase):
             self.jobs.submit(request_id, 'A different cube')
         self.assertEqual(conflict.exception.code, 'request_conflict')
 
+    def test_omitted_preset_can_resume_a_legacy_fast_job(self):
+        job = self.submit(preset='fast')
+        self.assertEqual(self.jobs.submit(job, 'A geometric robot')['task_id'], job)
+        with self.assertRaises(ImageJobError):
+            self.jobs.submit(job, 'A geometric robot', preset='quality')
+
     def test_admission_checks_backend_again_before_post(self):
         self.ready = False
         with self.assertRaises(ImageJobError) as unavailable:
@@ -189,8 +195,9 @@ class ImageJobsTest(unittest.TestCase):
         self.assertFalse(graph['468']['inputs']['switch'])
         self.assertEqual(graph['468']['inputs']['on_false'], ['474', 2])
         self.assertEqual(graph['458']['inputs']['latent_image'], ['468', 0])
-        self.assertEqual(graph['pruna_sigmas']['inputs']['latent'], ['468', 0])
-        self.assertEqual(graph['458']['inputs']['noise_seed'], 123)
+        self.assertEqual(graph['458']['inputs']['steps'], 40)
+        self.assertNotIn('pruna_sigmas', graph)
+        self.assertEqual(graph['458']['inputs']['seed'], 123)
 
     def test_saved_output_survives_cleanup_after_worker_crashes_before_archive(self):
         task_id = self.submit()

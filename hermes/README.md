@@ -76,7 +76,7 @@ uv run python scripts/export_contract.py --output ../ubuntu/config/client-contra
 |---|---|
 | `prompt` | 必填，1–8000 字符，超限报错，不截断 |
 | `images` | 有序 0–10 张本机 PNG 路径或 `img_000001`；无图为文生图 |
-| `preset` | 默认 `fast`：LoRA、6 步、Euler/Pruna 自定义 sigmas；`quality`：无 LoRA、25 步、Euler/simple，文生图和编辑均沿用保存的 ComfyUI 官方模板 |
+| `preset` | 默认 `fast`：LoRA、6 步、Euler/Pruna 自定义 sigmas；`quality`：无 LoRA、Euler/simple。配合 Ubuntu 0.8.1 为 40 步，0.8.0 为 25 步 |
 | `size` | 默认 `auto`：文生图 1024×1024，编辑 latent 跟随第一张参考图处理后的尺寸；可明确指定比例或 `宽x高` |
 | `title` | 可选，最多 80 字符，描述生成意图，供后续查找；不是视觉核验结果 |
 | `seed` | 文生图默认固定 `0`；edit 默认随机并避开已知参考图生成 seed，显式冲突自动换值；无符号 64 位，`seed + count - 1 < 2^64` |

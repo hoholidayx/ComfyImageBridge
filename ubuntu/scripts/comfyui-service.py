@@ -454,7 +454,7 @@ def _smoke(cold=False):
     folder = DATA/'health'/probe_id
     folder.mkdir(parents=True)
     request = {'prompt': 'A red cube and a blue sphere on a white background. Diagnostic '+probe_id,
-               'preset':'fast', 'seed':seed, 'output_size':{'mode':'explicit','width':64,'height':64}}
+               'preset':'quality', 'seed':seed, 'output_size':{'mode':'explicit','width':64,'height':64}}
     prefix = 'comfy-workflow-api/health/'+probe_id+'/image'
     graph = compile_graph('qwen-image-2.1-t2i', snapshot, request, prefix=prefix)
     prompt_id = str(uuid.uuid4())

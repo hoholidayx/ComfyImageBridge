@@ -1,12 +1,14 @@
 """Stable generation presets shared by the SDK and Hermes bridge."""
 import copy
 
+DEFAULT_PRESET = 'quality'
+
 PRESETS = {
-    'qwen-image-2.1-t2i': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 25}},
-    'qwen-image-2.1-edit': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 25}},
+    'qwen-image-2.1-t2i': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
+    'qwen-image-2.1-edit': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
 }
 CONTRACT_VERSION = 7
-VERSION = '0.8.0'
+VERSION = '0.8.1'
 MAX_PROMPT_LENGTH = 8000
 
 
@@ -22,7 +24,7 @@ def normalize(request, workflow=None):
         raise ValueError('prompt must be a nonempty string')
     if len(prompt) > MAX_PROMPT_LENGTH:
         raise ValueError('prompt exceeds 8000 characters; never truncated')
-    preset = request.get('preset', 'quality' if request.get('use_lora') is False else 'fast')
+    preset = request.get('preset', 'fast' if request.get('use_lora') is True else DEFAULT_PRESET)
     if preset not in presets:
         raise ValueError('preset must be fast or quality')
     if request.get('negative_prompt', '') != '' or request.get('cfg', 1) != 1:
