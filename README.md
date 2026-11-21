@@ -10,6 +10,8 @@ Ubuntu 使用自己的 Python 3.12 环境和 `uv.lock`。MCP 是可选依赖，�
 
 自研框架的后端连接 `http://<Ubuntu 内网地址>:<端口>/mcp`。调用 `image_submit` 得到任务 ID，后台调用 `image_status` 与 `image_result`。每个任务返回一张 PNG。文生图和编辑使用相同入口，编辑支持最多 10 张有序参考图。
 
+Maus 可在统一的异步生图服务中选择 `comfy` 后端，由网关调用本 Bridge 的 MCP 地址。OpenAI 官方与 AiWave 由网关各自的适配器处理。[async-image-mcp](https://github.com/hoholidayx/async-image-mcp)
+
 框架保存完整附件和任务记录，按需向模型提供简短回执或附件引用。MCP 只检查 ComfyUI 的渲染就绪状态，启停、恢复和唤醒由运维流程负责。
 
 - [MCP 部署、工具契约与自研框架接入](docs/mcp.md)

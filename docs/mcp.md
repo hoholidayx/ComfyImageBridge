@@ -69,11 +69,13 @@ uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image
 
 默认只发现工具并查询一个不存在的任务。加 `--generate` 后提交一次合成文生图，再用新连接重放同一 ID、检查冲突、轮询、重复取图并校验 PNG 与 SHA-256。`--edit` 追加一次使用生成图和仓库合成色板的参考图编辑。每个任务的本地图片和回执存于临时目录，脚本退出时自动清理。服务端任务仍按各自的保留规则管理。`--wait-seconds` 调整每个任务的轮询时间。脚本把原请求 ID 打印到 stderr，超时或连接中断时应按原 ID 续查。连接 Comfy MCP 时可用示例客户端的 `--task-id`。
 
-同一脚本可验收通过 MCP 暴露的 OpenAI Images 兼容供应商。先启动已配置供应商 URL、模型和凭据的独立 MCP 适配器。将 MCP 访问令牌安全加载到环境变量，供应商 API 密钥由适配器读取。示例回环 URL 对应适配器的模型入口。
+Maus 也可以通过独立的异步生图网关访问本服务。在网关的 `comfy` 后端配置 Bridge 的完整 MCP 地址。网关把原任务 ID、档位、尺寸和参考图传给 Bridge，完成状态和 PNG 由 Bridge 返回。Ubuntu 上的进程、工作流与日志仍由本项目管理。[网关配置与后端契约](https://github.com/hoholidayx/async-image-mcp)
+
+同一验收脚本可验证网关配置的默认后端。以下示例使用本机统一入口，从环境变量读取网关访问令牌。
 
 ```bash
 uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
-  --url http://127.0.0.1:8790/mcp/example --token-env IMAGE_MCP_TOKEN --generate
+  --url http://127.0.0.1:8790/mcp --token-env ASYNC_IMAGE_MCP_TOKEN --generate
 ```
 
 省略尺寸时由服务端选择默认尺寸。经兼容供应商运行 `--generate` 可能产生实际费用。历次结果见[实机验收记录](mcp-rollout.md)。
