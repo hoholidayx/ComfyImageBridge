@@ -416,7 +416,7 @@ def _read_database(folder):
 
 
 def _identity(pid):
-    from .sleep_guard import identity
+    from .operations.process_identity import identity
     return identity(pid)
 
 

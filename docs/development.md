@@ -22,10 +22,15 @@ uv run --project ubuntu --locked --extra mcp python ubuntu/scripts/check.py
 
 | 修改目标 | 位置 |
 | --- | --- |
-| SDK 编译、HTTP、存储与清理 | `ubuntu/src/comfy_workflow_api/` |
-| MCP 协议、生图任务、进程管理 | `ubuntu/src/comfy_workflow_api/mcp_server.py`、`image_jobs.py` 与 `ubuntu/scripts/mcp-service.sh` |
-| 受管 ComfyUI 服务 | `ubuntu/scripts/comfyui-service.py` |
-| 当前快照与允许拓扑 | `ubuntu/workflows/` |
+| MCP 工具协议与生产服务组装 | `ubuntu/src/comfy_workflow_api/mcp_server.py` |
+| 任务队列、去重、seed 来源与结果保留 | `image_jobs.py`、`retention.py` |
+| SDK 公开入口、执行流程与编译 | `api.py`、`generation.py`、`compiler.py` |
+| 运行时接口与 Ubuntu 实现 | `backend.py`、`operations/runtime.py` |
+| 只读就绪检查与真实烟测 | `operations/service_readiness.py`、`operations/render_probe.py` |
+| 服务启停、睡眠恢复和定时清理 | `ubuntu/scripts/comfyui-service.py`、`ubuntu/scripts/mcp-service.sh`、`sleep_cycle.py`、`operations/maintenance.py` |
+| 快照读取与允许拓扑 | `snapshots.py`、`ubuntu/workflows/` |
+
+表中 Python 模块的相对路径从 `ubuntu/src/comfy_workflow_api/` 起算。修改模块边界后，运行上面的离线检查。`ubuntu/tests/test_generation_boundaries.py` 验证两侧可以独立加载，并使用替代运行时覆盖文生图和参考图编辑。依赖方向和提交时序见[架构说明](architecture.md#生图与-ubuntu-运维的边界)。
 
 ## 发布步骤
 

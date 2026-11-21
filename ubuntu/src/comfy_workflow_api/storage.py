@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import tempfile
@@ -36,3 +38,11 @@ def write_json(path, value, *, create_parent=True):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+@contextmanager
+def cleanup_lock(data):
+    data.mkdir(parents=True, exist_ok=True)
+    with (data / '.cleanup.lock').open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield

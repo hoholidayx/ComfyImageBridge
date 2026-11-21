@@ -1,5 +1,6 @@
 """Stable generation presets shared by the SDK and MCP service."""
 import copy
+from .version import VERSION
 
 DEFAULT_PRESET = 'quality'
 
@@ -7,7 +8,6 @@ PRESETS = {
     'qwen-image-2.1-t2i': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
     'qwen-image-2.1-edit': {'fast': {'use_lora': True, 'steps': 6}, 'quality': {'use_lora': False, 'steps': 40}},
 }
-VERSION = '0.9.0'
 MAX_PROMPT_LENGTH = 8000
 
 

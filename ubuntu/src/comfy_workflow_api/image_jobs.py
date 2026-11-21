@@ -1,6 +1,6 @@
 """Durable single-image jobs shared by service adapters."""
 
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 import fcntl
 import hashlib
 import json
@@ -13,14 +13,10 @@ import tempfile
 import time
 import uuid
 
-from .api import OutputUnavailable
+from .backend import BackendUnavailable, OutputUnavailable
 from .client import APIError, png_size
 from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH, PRESETS
-from .lifecycle import BackendUnavailable
-from .retention import automatic_cleanup, cleanup_lock
-from .service_readiness import ready_instance
-from .sleep_cycle import SleepPending, assert_allowed
-from .storage import read_json
+from .storage import cleanup_lock, read_json
 
 
 MAX_IMAGES = 10
@@ -190,17 +186,12 @@ class ImageJobs:
 
     def _check_ready(self):
         try:
-            assert_allowed(self.api)
-            ready = self.readiness() if self.readiness is not None else ready_instance(self.api)
-        except SleepPending:
-            ready = False
-        if not ready:
-            raise ImageJobError('backend_unavailable', 'ComfyUI is unavailable for generation')
+            self.api.runtime.require_ready(self.readiness)
+        except BackendUnavailable as exc:
+            raise ImageJobError('backend_unavailable', 'ComfyUI is unavailable for generation') from exc
 
     def _admission_ready(self, instance_id):
-        if self.readiness is not None:
-            return bool(self.readiness())
-        return instance_id is not None and ready_instance(self.api) == instance_id
+        return self.api.runtime.admission_ready(instance_id, self.readiness)
 
     def submit(self, request_id, prompt, preset=None, size='auto', seed=None, images=()):
         task_id = _task_id(request_id)
@@ -283,11 +274,7 @@ class ImageJobs:
     def _release_pin(self, backend_id, error_code=None):
         if backend_id is not None:
             try:
-                if error_code in ('output_unavailable', 'output_invalid'):
-                    marker = self.api._directory(backend_id) / '.result-discarded'
-                    if marker.parent.is_dir():
-                        marker.touch(mode=0o600)
-                self.api.pin_result(backend_id, False)
+                self.api.pin_result(backend_id, False, discarded=error_code in ('output_unavailable', 'output_invalid'))
             except OSError:
                 LOG.error('Unable to release result retention pin')
 
@@ -316,7 +303,7 @@ class ImageJobs:
                         raise ValueError('Saved references are incomplete')
                 self.api.submit(workflow, effective, task_id=backend_id, readiness=self._admission_ready,
                                 before_prompt=lambda prompt_id: self._before_prompt(task_id, backend_id, prompt_id))
-        except (SleepPending, BackendUnavailable):
+        except BackendUnavailable:
             self._finish(task_id, 'failed', 'backend_unavailable')
             return
         except (ValueError, OSError, RuntimeError):
@@ -442,7 +429,7 @@ class ImageJobs:
             self._observe(job)
         return True
 
-    def run(self, stop):
+    def run(self, stop, *, worker_lifespan=nullcontext):
         with (self.home / 'worker.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self._db() as db:
@@ -457,7 +444,7 @@ class ImageJobs:
                     for path in folder.glob('*.png'):
                         path.unlink()
                     folder.rmdir()
-            with automatic_cleanup(self.api):
+            with worker_lifespan():
                 while not stop.is_set():
                     try:
                         self.tick()

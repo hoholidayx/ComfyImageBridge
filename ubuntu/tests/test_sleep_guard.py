@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from comfy_workflow_api import sleep_guard as guard
+from comfy_workflow_api.operations import process_identity
 from comfy_workflow_api.storage import write_json
 
 
@@ -18,10 +19,10 @@ class SleepGuardTest(unittest.TestCase):
 
     def test_identity_rejects_pid_reuse_and_changed_command(self):
         saved = {'pid': 123, 'uid': os.getuid(), 'start_ticks': '456', 'command': ['our-worker']}
-        with patch.object(guard, 'identity', return_value=saved):
+        with patch.object(process_identity, 'identity', return_value=saved):
             self.assertTrue(guard.matches(saved))
         for changed in ({**saved, 'start_ticks': '789'}, {**saved, 'command': ['other-process']}, None):
-            with patch.object(guard, 'identity', return_value=changed):
+            with patch.object(process_identity, 'identity', return_value=changed):
                 self.assertFalse(guard.matches(saved))
 
     def test_lease_is_removed_even_when_submission_raises(self):

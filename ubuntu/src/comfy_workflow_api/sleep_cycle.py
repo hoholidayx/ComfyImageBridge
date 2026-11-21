@@ -16,13 +16,14 @@ import time
 import uuid
 
 from .storage import now, read_json, write_json
-from .lifecycle import ANY_EPOCH
+from .operations.lifecycle import ANY_EPOCH
+from .backend import BackendContext, BackendUnavailable
 
 ACTIVE = {'preparing', 'sleeping', 'restoring', 'restored', 'restore_failed'}
 _authorization = ContextVar('sleep_cycle_authorization', default=None)
 
 
-class SleepPending(RuntimeError):
+class SleepPending(BackendUnavailable):
     pass
 
 
@@ -362,15 +363,14 @@ def _shutdown_never_started(value, current):
 
 
 def main():
-    from .api import WorkflowAPI
-    from .service_readiness import manager_for
+    from .operations.service_manager import manager_for
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--token')
     parser.add_argument('--reason')
     parser.add_argument('action', choices=('pre', 'resume-owner', 'finalize', 'status', 'retry', 'abort', 'fail'))
     args = parser.parse_args()
-    api = WorkflowAPI(args.root)
+    api = BackendContext(args.root)
     if args.action == 'status':
         print(json.dumps(status(api), ensure_ascii=False))
         return 0

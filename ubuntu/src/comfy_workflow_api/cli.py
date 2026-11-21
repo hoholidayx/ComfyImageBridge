@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from .api import WorkflowAPI
+from .backend import BackendContext
 
 
 def main():
@@ -30,34 +30,40 @@ def main():
             p.add_argument("--timeout", type=float)
     args = parser.parse_args()
     try:
-        api = WorkflowAPI(args.root, args.base_url)
-        if args.command == 'sleep-guard':
-            from . import sleep_guard
-            if args.action == 'restart':
-                sleep_guard.stop(api, force=args.force)
-                result = sleep_guard.start(api)
-            elif args.action == 'stop':
-                result = sleep_guard.stop(api, force=args.force)
-            else:
-                result = getattr(sleep_guard, args.action)(api)
-        elif args.command == 'cleanup':
-            result = api.cleanup(dry_run=args.dry_run)
-        elif args.command in ("compile", "submit", "run"):
-            path = args.request.resolve()
-            kwargs = {"request_dir": path.parent}
-            if args.command == "run":
-                kwargs["timeout"] = args.timeout
-            result = getattr(api, args.command)(args.workflow, json.loads(path.read_text()), **kwargs)
-        elif args.command in ("status", "wait", "fetch", "cancel"):
-            kwargs = {"timeout": args.timeout} if args.command == "wait" else {}
-            result = getattr(api, args.command)(args.task_id, **kwargs)
-        else:
-            result = getattr(api, args.command.replace("-", "_"))()
+        result = dispatch(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
         print(json.dumps({"error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=False), file=sys.stderr)
         return 1
+
+
+def dispatch(args):
+    if args.command == 'sleep-guard':
+        from . import sleep_guard
+        backend = BackendContext(args.root, args.base_url)
+        if args.action == 'restart':
+            sleep_guard.stop(backend, force=args.force)
+            return sleep_guard.start(backend)
+        if args.action == 'stop':
+            return sleep_guard.stop(backend, force=args.force)
+        return getattr(sleep_guard, args.action)(backend)
+    if args.command == 'cleanup':
+        from .operations.maintenance import cleanup
+        return cleanup(BackendContext(args.root, args.base_url), dry_run=args.dry_run)
+
+    from .api import WorkflowAPI
+    api = WorkflowAPI(args.root, args.base_url)
+    if args.command in ("compile", "submit", "run"):
+        path = args.request.resolve()
+        kwargs = {"request_dir": path.parent}
+        if args.command == "run":
+            kwargs["timeout"] = args.timeout
+        return getattr(api, args.command)(args.workflow, json.loads(path.read_text()), **kwargs)
+    if args.command in ("status", "wait", "fetch", "cancel"):
+        kwargs = {"timeout": args.timeout} if args.command == "wait" else {}
+        return getattr(api, args.command)(args.task_id, **kwargs)
+    return getattr(api, args.command.replace("-", "_"))()
 
 
 if __name__ == "__main__":

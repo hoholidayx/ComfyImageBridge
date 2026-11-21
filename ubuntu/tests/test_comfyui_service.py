@@ -1,3 +1,4 @@
+from comfy_workflow_api.operations import render_probe
 from contextlib import nullcontext
 from datetime import datetime, timezone, timedelta
 import importlib.util
@@ -215,7 +216,7 @@ class ServiceTest(unittest.TestCase):
         receipt={'service_instance_id':'instance'}
         with patch.object(service.CLIENT,'request',side_effect=[TimeoutError('model load blocks HTTP'),{'done':True}]) as request, \
              patch.object(service.time,'monotonic',return_value=10),patch.object(service.time,'sleep'):
-            result=service._probe_read('/history/known-prompt',receipt,self.data,120)
+            result=render_probe._probe_read(service.CLIENT, service.STATE, '/history/known-prompt',receipt,self.data,120)
         self.assertEqual(result,{'done':True})
         self.assertEqual(receipt['read_retries'],1)
         self.assertEqual([call.args[0] for call in request.call_args_list],['/history/known-prompt']*2)
@@ -224,7 +225,7 @@ class ServiceTest(unittest.TestCase):
         with patch.object(service.CLIENT,'request',side_effect=TimeoutError('blocked')) as request, \
              patch.object(service.time,'monotonic',return_value=121):
             with self.assertRaisesRegex(TimeoutError,'no generation was resubmitted'):
-                service._probe_read('/history/known-prompt',{'service_instance_id':'instance'},self.data,120)
+                render_probe._probe_read(service.CLIENT, service.STATE, '/history/known-prompt',{'service_instance_id':'instance'},self.data,120)
         self.assertEqual(request.call_count,1)
 
     def test_graceful_stop_waits_for_slow_exit_and_signals_python_only_once(self):
@@ -340,12 +341,11 @@ class ServiceTest(unittest.TestCase):
         self.assertFalse((self.data/'admission.json').exists())
 
     def smoke_failure(self, kind):
-        from types import SimpleNamespace
         value = self.current()
         def respond(path, method='GET', body=None, **kwargs):
             if path == '/prompt':
                 if kind == 'configuration':
-                    raise service.APIError(400, 'missing model node')
+                    raise render_probe.APIError(400, 'missing model node')
                 return {'prompt_id':body['prompt_id']}
             if path.startswith('/history/'):
                 prompt_id = path.rsplit('/',1)[-1]
@@ -353,13 +353,21 @@ class ServiceTest(unittest.TestCase):
                     ['execution_start', {'timestamp':1000}], ['execution_success', {'timestamp':32001}]]
                 return {prompt_id:{'status':{'completed':True, 'messages':messages}, 'outputs':{}}}
             self.fail('Unexpected request: '+path)
-        api = SimpleNamespace(_snapshot=lambda alias:({},{}))
         with patch.object(service, 'status', return_value=value), \
              patch.object(service, 'workflow_hash', return_value='hash'), \
-             patch.object(service, 'compile_graph', return_value={'458':{'class_type':'SamplerCustom'}}), \
-             patch('comfy_workflow_api.api.WorkflowAPI', return_value=api), \
+             patch.object(render_probe, 'compile_graph', return_value={'458':{'class_type':'SamplerCustom'}}), \
+             patch.object(render_probe, 'read_snapshot', return_value=({}, {})), \
              patch.object(service.CLIENT, 'request', side_effect=respond):
             return service._smoke()
+
+    def test_smoke_does_not_certify_a_snapshot_changed_during_preparation(self):
+        with patch.object(service, 'status', return_value=self.current()), \
+             patch.object(service, 'workflow_hash', side_effect=['old', 'new']), \
+             patch.object(render_probe, 'read_snapshot', return_value=({}, {})), \
+             patch.object(service.CLIENT, 'request') as request:
+            self.assertTrue(service._smoke()['smoke_failed'])
+        request.assert_not_called()
+        self.assertNotIn('verification', service.read_json(service.STATE))
 
     def test_cached_sampler_does_not_pass_smoke(self):
         result = self.smoke_failure('cached')

@@ -7,7 +7,8 @@ import uuid
 from pathlib import Path
 from comfy_workflow_api import WorkflowAPI
 from comfy_workflow_api.storage import read_json, write_json
-from comfy_workflow_api.retention import automatic_cleanup, prune_probes
+from comfy_workflow_api.operations.maintenance import automatic_cleanup, cleanup
+from comfy_workflow_api.operations.render_probe import prune_probes
 import test_workflows as fixtures
 
 
@@ -134,13 +135,14 @@ class RetentionTest(unittest.TestCase):
         self.task(2, state='failed')
         self.task(3, state='failed')
         done = threading.Event()
-        def sweep():
-            WorkflowAPI.cleanup(self.api)
+        def sweep(backend):
+            cleanup(backend)
             done.set()
-        with patch.object(self.api, 'cleanup', side_effect=sweep) as cleanup:
+
+        with patch('comfy_workflow_api.operations.maintenance.cleanup', side_effect=sweep) as sweep_mock:
             self.api.settings['retention']['auto_cleanup'] = False
             with automatic_cleanup(self.api):
-                cleanup.assert_not_called()
+                sweep_mock.assert_not_called()
             self.api.settings['retention']['auto_cleanup'] = True
             with automatic_cleanup(self.api):
                 self.assertTrue(done.wait(3))
@@ -191,7 +193,7 @@ class RetentionTest(unittest.TestCase):
         target = self.root/'foreign.log'
         target.write_text('original')
         (self.api.data/'cleanup.log').symlink_to(target)
-        with self.assertLogs('comfy_workflow_api.log_retention', level='WARNING'):
+        with self.assertLogs('comfy_workflow_api.retention', level='WARNING'):
             result = self.api.cleanup()
         self.assertIn(broken, result['skipped_task_ids'])
         self.assertIn(other, result['task_ids'])

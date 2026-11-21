@@ -21,4 +21,4 @@ Ubuntu 使用自己的 Python 3.12 环境和 `uv.lock`。MCP 是可选依赖，�
 - [故障排查](docs/troubleshooting.md)
 - [来源与许可说明](NOTICE.md)
 
-当前 Ubuntu 包版本为 **0.9.0**。
+当前 Ubuntu 包版本为 **0.9.1**。

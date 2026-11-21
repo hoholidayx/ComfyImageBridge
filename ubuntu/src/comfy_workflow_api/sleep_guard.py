@@ -12,7 +12,8 @@ import time
 import uuid
 from .client import Client
 from .storage import now, read_json, write_json
-from .lifecycle import ANY_EPOCH
+from .operations.lifecycle import ANY_EPOCH
+from .operations.process_identity import identity, matches
 
 
 def home(api):
@@ -26,32 +27,6 @@ def control(api):
     with (home(api)/'control.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
         yield
-
-
-def identity(pid):
-    path = Path('/proc')/str(pid)
-    try:
-        fields = (path/'stat').read_text().rsplit(')', 1)[1].split()
-        if fields[0] == 'Z':
-            return None
-        return {'pid': pid, 'start_ticks': fields[19], 'uid': path.stat().st_uid,
-                'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-                'command': (path/'cmdline').read_bytes().decode().rstrip('\0').split('\0')}
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def matches(saved):
-    if not saved or saved.get('uid') != os.getuid():
-        return False
-    current = identity(saved['pid'])
-    if not current:
-        return False
-    # Compatibility for pre-upgrade records. New identities always carry boot_id;
-    # the service manager separately verifies boot identity before adoption.
-    if 'boot_id' not in saved:
-        current = {key: value for key, value in current.items() if key != 'boot_id'}
-    return current == saved
 
 
 def state(api):
@@ -220,7 +195,7 @@ def ticket(api, task_id, remove=False):
             if remove:
                 path.unlink(missing_ok=True)
             else:
-                from .lifecycle import instance_id
+                from .operations.lifecycle import instance_id
                 write_json(path, {'task_id': task_id, 'created_at': now(), 'service_instance_id': instance_id(api)})
 
 
@@ -268,7 +243,7 @@ def worker(api, token):
         client = Client(api.client.base_url, timeout=3)
         last_busy = time.monotonic()
         saw_busy = False
-        from . import lifecycle, task_diagnostics
+        from .operations import lifecycle, task_observer
         observed_instance = lifecycle.instance_id(api)
         last_observation = 0
         reason = 'stopped_by_operator'
@@ -300,7 +275,7 @@ def worker(api, token):
                         saw_busy = busy
                         observed_instance = lifecycle.instance_id(api)
                         if busy and time.monotonic()-last_observation >= 5:
-                            task_diagnostics.observe(api, queue)
+                            task_observer.observe(api, queue)
                             last_observation = time.monotonic()
                         if not busy and not leases:
                             for path in tickets:
@@ -340,5 +315,5 @@ def main():
     parser.add_argument('--worker', action='store_true', required=True)
     parser.add_argument('--token', required=True)
     args = parser.parse_args()
-    from .api import WorkflowAPI
-    worker(WorkflowAPI(args.root, args.base_url), args.token)
+    from .backend import BackendContext
+    worker(BackendContext(args.root, args.base_url), args.token)

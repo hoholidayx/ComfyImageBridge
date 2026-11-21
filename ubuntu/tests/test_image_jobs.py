@@ -123,6 +123,16 @@ class ImageJobsTest(unittest.TestCase):
             'task_id': task_id, 'state': 'failed', 'error_code': 'backend_unavailable'})
         self.assertFalse(self.client.posts)
 
+    def test_managed_worker_rechecks_the_instance_under_admission(self):
+        write_json(self.api.data/'comfyui-service/state.json', {'service_instance_id': 'a'})
+        self.jobs = ImageJobs(self.api)
+        with patch('comfy_workflow_api.operations.service_readiness.ready_instance', side_effect=['a', 'b']) as ready:
+            job = self.submit()
+            self.jobs.tick()
+        self.assertEqual(ready.call_count, 2)
+        self.assertEqual(self.jobs.status(job)['error_code'], 'backend_unavailable')
+        self.assertFalse(self.client.posts)
+
     def test_unknown_ack_reconciles_without_second_post_and_returns_verified_png(self):
         task_id = self.submit()
         self.client.lost_ack = True

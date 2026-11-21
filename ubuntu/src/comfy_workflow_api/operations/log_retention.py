@@ -1,22 +1,10 @@
 """Rotate Bridge-owned append-only logs while preserving inherited descriptors."""
-import json
 import logging
 import os
 from pathlib import Path
 import stat
 import tempfile
-from .storage import is_job_id, now
-
-
-def record_cleanup(data, entry):
-    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    try:
-        with os.fdopen(os.open(data / 'cleanup.log', flags, 0o600), 'a') as stream:
-            info = os.fstat(stream.fileno())
-            if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-                stream.write(json.dumps({'time': now(), **entry}) + '\n')
-    except OSError as exc:
-        logging.getLogger(__name__).warning('Unable to append cleanup log: %s', exc)
+from ..storage import is_job_id
 
 
 def rotate_logs(api, dry_run):

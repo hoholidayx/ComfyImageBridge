@@ -1,8 +1,14 @@
 import asyncio
 import base64
+from contextlib import contextmanager
+import fcntl
 import hashlib
 from importlib.util import find_spec
 from io import BytesIO
+from pathlib import Path
+import shutil
+import tempfile
+from threading import Event
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -15,7 +21,7 @@ if MCP_INSTALLED:
     from mcp.client.streamable_http import streamable_http_client
     from PIL import Image
     from comfy_workflow_api.image_jobs import ImageJobError
-    from comfy_workflow_api.mcp_server import MAX_HTTP_BODY, create_app
+    from comfy_workflow_api.mcp_server import MAX_HTTP_BODY, create_app, create_managed_app
 
 
 def png_bytes(color):
@@ -142,3 +148,30 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_client_can_discover_tools(self):
         async with self.client(mode='legacy') as client:
             self.assertEqual(len((await client.list_tools()).tools), 3)
+
+
+@unittest.skipUnless(MCP_INSTALLED, 'requires the optional mcp extra')
+class ManagedAppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maintenance_runs_under_the_worker_lock_and_exits_on_shutdown(self):
+        entered, exited = Event(), Event()
+
+        @contextmanager
+        def maintenance(api):
+            with (api.data/'image-jobs/worker.lock').open('a') as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            entered.set()
+            try:
+                yield
+            finally:
+                exited.set()
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            shutil.copytree(Path(__file__).resolve().parents[1]/'config', root/'config')
+            with patch('comfy_workflow_api.operations.maintenance.automatic_cleanup', maintenance):
+                app = create_managed_app(root, 'http://127.0.0.1:8188', host='127.0.0.1', port=8787)
+            async with app.router.lifespan_context(app):
+                self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+                self.assertFalse(exited.is_set())
+            self.assertTrue(exited.is_set())

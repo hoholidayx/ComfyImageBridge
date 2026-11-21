@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import base64
+from functools import partial
 from contextlib import asynccontextmanager
 from io import BytesIO
 import json
@@ -24,9 +25,9 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 import uvicorn
 
-from .api import WorkflowAPI
 from .client import png_size
-from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH, VERSION
+from .contract import DEFAULT_PRESET, MAX_PROMPT_LENGTH
+from .version import VERSION
 from .image_jobs import (
     ImageJobs, ImageJobError, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE, MAX_IMAGE_TOTAL_BYTES, MAX_IMAGES,
 )
@@ -117,8 +118,10 @@ class _CheckHTTPHeaders:
         await self.app(scope, receive, send)
 
 
-def create_app(jobs, *, host, port):
-    """Compose an MCP application and one job worker for the HTTP process."""
+def create_app(jobs, *, host, port, run_worker=None):
+    """Serve the image tools and manage the lifetime of their worker thread."""
+    if run_worker is None:
+        run_worker = jobs.run
     hosts = [f'{host}:{port}']
     if port == 80:
         hosts.append(host)
@@ -198,7 +201,7 @@ def create_app(jobs, *, host, port):
         nonlocal worker
         async with http_lifespan(application):
             stop.clear()
-            worker = Thread(target=jobs.run, args=(stop,), name='image-jobs')
+            worker = Thread(target=run_worker, args=(stop,), name='image-jobs')
             worker.start()
             try:
                 yield
@@ -209,6 +212,16 @@ def create_app(jobs, *, host, port):
     app.router.lifespan_context = lifespan
     app.add_middleware(_CheckHTTPHeaders, hosts=hosts, origins=origins)
     return app
+
+
+def create_managed_app(root, base_url, *, host, port):
+    from .api import WorkflowAPI
+    from .operations.maintenance import automatic_cleanup
+
+    api = WorkflowAPI(root=root, base_url=base_url)
+    jobs = ImageJobs(api)
+    run_worker = partial(jobs.run, worker_lifespan=partial(automatic_cleanup, api))
+    return create_app(jobs, host=host, port=port, run_worker=run_worker)
 
 
 def main(argv=None):
@@ -234,10 +247,9 @@ def main(argv=None):
         host, port = mcp_listen({'mcp': config})
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.error(str(exc))
-    api = WorkflowAPI(root=root, base_url=base_url)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    jobs = ImageJobs(api)
-    uvicorn.run(create_app(jobs, host=host, port=port), host=host, port=port, workers=1,
+    app = create_managed_app(root, base_url, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, workers=1,
                 lifespan='on', access_log=False, proxy_headers=False, limit_concurrency=8)
 
 

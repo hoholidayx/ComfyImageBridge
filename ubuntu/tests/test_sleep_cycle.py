@@ -12,7 +12,8 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from comfy_workflow_api import lifecycle, sleep_cycle as cycle, sleep_guard
+from comfy_workflow_api import sleep_cycle as cycle, sleep_guard
+from comfy_workflow_api.operations import lifecycle
 from comfy_workflow_api.storage import write_json
 
 

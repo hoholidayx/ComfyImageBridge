@@ -2,14 +2,12 @@
 from contextlib import contextmanager
 import fcntl
 import os
-from .storage import now, read_json, write_json
+from .process_identity import identity
+from ..backend import BackendUnavailable
+from ..storage import now, read_json, write_json
 
 # Shared without importing the sleep CLI during package initialization.
 ANY_EPOCH = object()
-
-
-class BackendUnavailable(RuntimeError):
-    """The managed service cannot accept a new generation."""
 
 
 def service_state(api):
@@ -39,13 +37,12 @@ def retired(api, service_instance_id):
 
 @contextmanager
 def submission(api, task_id, operation_id, readiness=None):
-    from .sleep_guard import identity
     folder = api.data/'comfyui-service'
     folder.mkdir(parents=True, exist_ok=True)
     reservation = folder/'inflight'/f'{operation_id}.json'
     with (folder/'admission.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        from .sleep_cycle import assert_allowed
+        from ..sleep_cycle import assert_allowed
         assert_allowed(api)
         gate = folder/'admission.json'
         if gate.exists():

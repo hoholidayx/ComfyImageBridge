@@ -10,6 +10,12 @@
 - 防睡眠 lease 关联持有进程身份；年龄只报警，不能按时间强行释放活跃 lease。队列清空且无持有者后按宽限期释放。
 - 仅在明确要求系统托管或登录自启时引入 systemd 等常驻配置。整理代码或读取文档不代表授权启动、唤醒、生成或重启服务。
 
+## 模块边界
+
+- `image_jobs.py` 和 `generation.py` 通过 `GenerationRuntime` 获取就绪、提交保护和实例证据。Ubuntu 适配写在 `operations/runtime.py`，服务启停、挂起恢复和 GPU 探测留在运维入口。
+- 运维烟测与生图共用快照校验、编译器和 ComfyUI 客户端，单独保存烟测状态。新增影响诊断图或就绪判定的依赖时，同步检查 `operations/service_readiness.py` 的 `workflow_hash` 和边界回归测试。
+- 任务结果保留逻辑放在 `retention.py`，全局清理与日志轮转放在 `operations/`；生产 MCP 入口负责组装清理线程与 worker 的生命周期。
+
 ## Qwen uni 工作流
 
 - 本项目只维护 `qwen-image-2.1-unified.json`。文生图和编辑保留各自的接口别名，共用一份快照。仓库的 `ubuntu/workflows/` 和 Bridge 部署的 `workflows/` 只放当前 uni 及清单。测试导出、单档位副本和部署临时文件用后清理。清理限于 Bridge 项目和部署目录，保留 ComfyUI 用户工作流、自定义节点及其他项目文件。

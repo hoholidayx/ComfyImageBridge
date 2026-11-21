@@ -139,7 +139,7 @@ bash scripts/comfyui-service.sh recover
 bash scripts/sleep-guard.sh status
 ```
 
-`status` 只读，不唤醒、不生成、不获取锁。`start`/`ensure_ready` 可能启动原脚本并进行真实 64×64 quality 烟测；运行中已有正常任务时不会插入烟测。HTTP 健康、端口 LISTEN、进程归属与实际 GPU 出图分别检查。恢复纪元、代码和工作流变更会使旧 ready 失效。
+`status` 只读，不唤醒、不生成、不获取锁。`start`/`ensure_ready` 可能启动原脚本并进行真实 64×64 quality 烟测；运行中已有正常任务时不会插入烟测。HTTP 健康、端口 LISTEN、进程归属与实际 GPU 出图分别检查。凭据绑定当前实例、恢复纪元、启动脚本、工作流清单及构建和验证烟测所需的代码。升级至 0.9.1 后需由运维执行一次 `ensure_ready` 刷新凭据；此后单独调整邮件或日志轮转代码可沿用原凭据。
 
 后台运行通过独立会话、nohup、`/dev/null` 输入和日志重定向脱离 SSH；记录 PID、启动标识、命令与日志。停止前验证归属、启动标识和进程组，遇到外来监听进程拒绝误杀；端口检测只认 LISTEN。普通停止保护活动生成，SIGINT 最多等待 120 秒，再自动升级 TERM/KILL；显式 recover 在确认异常与归属后按恢复策略处理，不再要求手动确认命令。SIGKILL 后仍不退出时报告可能的驱动等待，不反复重启或擅自重启主机。
 

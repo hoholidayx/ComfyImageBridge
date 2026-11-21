@@ -1,7 +1,6 @@
 """Read-only readiness evidence for the locally managed ComfyUI instance."""
 
 from datetime import datetime
-import importlib.util
 import hashlib
 import json
 import os
@@ -10,10 +9,10 @@ import subprocess
 import time
 from urllib.parse import urlsplit
 
-from .client import Client
-from .settings import service_paths
-from .sleep_guard import identity, matches
-from .storage import now, read_json
+from ..client import Client
+from ..settings import service_paths
+from .process_identity import identity, matches
+from ..storage import now, read_json
 
 
 def boot_id():
@@ -125,12 +124,18 @@ def instance_id(state):
 
 
 def workflow_hash(root, run_script):
-    paths = [root/'workflows/manifest.json', root/'scripts/comfyui-service.py', run_script]
-    paths += sorted((root/'src/comfy_workflow_api').glob('*.py'))
+    package = root/'src/comfy_workflow_api'
+    inputs = [
+        ('manifest', root/'workflows/manifest.json'), ('topology', root/'workflows/supported.json'),
+        ('service manager', root/'scripts/comfyui-service.py'), ('ComfyUI launcher', run_script),
+    ]
+    # Only code used to build, execute or verify the diagnostic render belongs in its identity.
+    for name in ('_edit.py', 'client.py', 'compiler.py', 'contract.py', 'sampling.py', 'snapshots.py',
+                 'storage.py', 'operations/service_readiness.py', 'operations/process_identity.py', 'operations/render_probe.py'):
+        inputs.append((name, package/name))
     value = hashlib.sha256()
-    for path in paths:
-        value.update(str(path.name).encode())
-        value.update(path.read_bytes())
+    for label, path in inputs:
+        value.update(label.encode() + b'\0' + path.read_bytes() + b'\0')
     return value.hexdigest()
 
 
@@ -145,6 +150,13 @@ def owned_owner(owner, state, live):
     return bool(owner and owner.get('uid') == os.getuid() and process_matches(owner) and
                 group(owner['pid']) == (pgid, pgid) and
                 (owner['pid'] in live or (live and int(owner.get('start_ticks', 0)) >= int(root.get('start_ticks', 0)))))
+
+
+def queue_ids(current):
+    if not current.get('queue_known'):
+        return None
+    return sorted({row[1] for key in ('queue_running','queue_pending')
+                   for row in current.get('queue', {}).get(key, []) if len(row) > 1})
 
 
 def health(client):
@@ -207,10 +219,3 @@ def ready_instance(api):
         return instance if health(Client(configured, timeout=2))['http_healthy'] else None
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
         return None
-
-
-def manager_for(root):
-    spec = importlib.util.spec_from_file_location('managed_comfyui_service', root/'scripts/comfyui-service.py')
-    manager = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(manager)
-    return manager

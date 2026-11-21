@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from comfy_workflow_api import WorkflowAPI
-from comfy_workflow_api import sleep_guard, task_diagnostics, lifecycle, batches
+from comfy_workflow_api import sleep_guard, task_diagnostics, batches
+from comfy_workflow_api.operations import lifecycle
 from comfy_workflow_api.client import Client
 from comfy_workflow_api.storage import read_json, write_json
 

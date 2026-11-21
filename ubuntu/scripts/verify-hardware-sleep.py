@@ -19,12 +19,12 @@ import uuid
 
 USER_CODE = r'''
 import json, sys
-from comfy_workflow_api.api import WorkflowAPI
-from comfy_workflow_api.service_readiness import manager_for
+from comfy_workflow_api.backend import BackendContext
+from comfy_workflow_api.operations.service_manager import manager_for
 from comfy_workflow_api import sleep_cycle, sleep_guard
 from comfy_workflow_api.storage import write_json
 root, action, payload = sys.argv[1:]
-api = WorkflowAPI(root)
+api = BackendContext(root)
 if action == 'hardware-check':
     from comfy_workflow_api.hardware_monitor import check, status
     value = check(api.root)
