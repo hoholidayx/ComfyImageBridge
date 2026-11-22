@@ -1,12 +1,12 @@
 # Ubuntu MCP 上线与实机验收
 
-## 0.9.3 · 局域网直连待部署
+## 2026-11-23 · 0.9.3 局域网直连与 Qwen 实机验收
 
-仓库和 Mac 隔离实例已验证私网 IPv4 监听、Host 校验、网关显式选择 `comfy` 以及同一任务重复取图。隔离实例使用模拟 ComfyUI。Ubuntu 升级、跨机直连与 Qwen GPU 出图留待主机恢复后执行。
+Ubuntu 从 0.8.2 升级到 0.9.3（`6658fe0`）。部署前备份了原配置和 12 条任务记录，核对了 uni 快照与发布版的文件内容。私有配置只改了 `mcp.host`。Bridge 监听有线网卡的私网 IPv4，ComfyUI 监听本机回环地址。Ubuntu 的 264 项包测试和当前启动周期的 GPU 渲染探测均通过。部署结束后另开会话复查，两项服务的监听进程均归各自管理脚本所有。[升级说明](configuration.md)
 
-1. 在 Ubuntu 用 `ip -br -4 addr` 确认有线网卡地址，记录当前两个服务的状态和活动队列。队列空闲后备份现有配置，按[升级说明](configuration.md)更新部署目录，保留工作流、私有配置和任务数据。
-2. 在实际的 `config/settings.toml` 设置 `[mcp]` 的 `host`。单物理网卡可用 `"lan"`，多地址主机填选定的具体私网 IPv4。在 Ubuntu 部署目录执行 `uv sync --locked --extra mcp`、`scripts/comfyui-service.sh ensure_ready` 和 `scripts/mcp-service.sh restart`。核对状态里的实际监听地址、进程归属和健康检查。
-3. 在 Mac 的私有网关配置中将 `connections.comfy.base_url` 指向该地址的 `/mcp`，应用配置。先从 Mac 直接访问 Bridge，再经网关显式选择 `comfy` 生成 512×512 图片。记录任务号、尺寸、摘要、耗时和 ComfyUI 的实际 uni 采样记录。[验收命令](mcp.md#独立验收)
+- Mac 上的隔离 Maus 用普通聊天 API 提交任务，统一网关显式选择 `comfy`，经局域网直连 Ubuntu。后续文字消息在 1.79 秒时收到回复，生成的 512×512 PNG 在提交后 12.07 秒回到原卡。两个配对客户端、独立的 Bridge 客户端和重新连接的网关客户端取回了逐字节相同的图片，PNG 解码通过。[验收命令](mcp.md#独立验收)
+- ComfyUI 执行记录确认使用 Qwen Image 2.1 INT8 和 uni 文生图工作流。默认 `quality` 经过关闭加速 LoRA 的模型分支，实际执行 KSampler 40 步、Euler/simple、CFG 1、denoise 1。文生图和图生图在两个档位的实测结果见下方 11 月 21 日记录。
+- 现场定时休眠关闭，部署保留了原有 `sleep_guard.enabled = false`。启用定时休眠后的授锁及拒绝行为见下方 0.9.2 的隔离验收。
 
 ## 2026-11-22 · 0.9.2 自动防睡眠验收
 
