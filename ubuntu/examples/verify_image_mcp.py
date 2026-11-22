@@ -115,7 +115,8 @@ async def verify_job(connection, directory, request, *, label, size, wait_second
         require(any(low != high for low, high in image.convert("RGB").getextrema()), "Decoded PNG is a solid color")
     if request.get("images") and "seed" in request:
         require(metadata.get("seed_used") not in (None, request["seed"]), "Edit reused the reference seed")
-    emit(case=label, width=dimensions[0], height=dimensions[1], seconds=round(time.monotonic() - started, 2),
+    emit(case=label, task_id=task_id, sha256=metadata["sha256"], width=dimensions[0], height=dimensions[1],
+         seconds=round(time.monotonic() - started, 2),
          reconnect=True, request_conflict=True, deduplicated_attachment=True)
     return png, metadata.get("seed_used")
 
@@ -123,10 +124,14 @@ async def verify_job(connection, directory, request, *, label, size, wait_second
 async def run(connection, args):
     schema = await inventory(connection)
     properties = schema["properties"]
+    options = {"preset": "quality"} if "preset" in schema.get("required", []) else {}
+    if args.backend is not None:
+        selector = properties.get("backend", {})
+        require(args.backend in selector.get("enum", []), "The gateway does not advertise the requested backend")
+        options["backend"] = args.backend
     if not args.generate:
         return
     require(not args.edit or "images" in properties, "This endpoint does not support reference images")
-    options = {"preset": "quality"} if "preset" in schema.get("required", []) else {}
     if args.preset is not None:
         require("preset" in properties, "This endpoint does not support preset selection")
         options["preset"] = args.preset
@@ -153,6 +158,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True, help="Full Streamable HTTP MCP endpoint URL")
     parser.add_argument("--token-env", help="Read the MCP bearer token from this environment variable")
+    parser.add_argument("--backend", help="Select an advertised gateway backend, for example comfy")
     parser.add_argument("--generate", action="store_true", help="Submit a real synthetic generation request")
     parser.add_argument("--edit", action="store_true", help="Additionally submit a real two-reference edit")
     parser.add_argument("--preset", choices=("fast", "quality"), help="Request this sampling preset")

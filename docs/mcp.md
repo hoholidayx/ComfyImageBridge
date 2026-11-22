@@ -2,7 +2,7 @@
 
 ## Ubuntu 部署
 
-在 Ubuntu 上以管理现有 ComfyUI 的同一用户运行。保留完整 `ubuntu/` 部署目录、现有 `config/settings.toml` 和数据目录。MCP 和 ComfyUI 各自拥有管理命令。MCP 管理脚本需要 Linux pidfd 支持，以便按进程身份发送停止信号。
+在 Ubuntu 上以管理现有 ComfyUI 的同一用户运行。保留完整 `ubuntu/` 部署目录、现有 `config/settings.toml` 和数据目录。新配置使用 `mcp.host = "lan"`。从回环部署升级时，先确认没有正在执行的任务，将现有配置中 `[mcp]` 的 `host` 改为 `"lan"` 或实际的可信内网 IPv4。MCP 管理脚本通过 Linux pidfd 确认被停止的进程。
 
 ```bash
 uv sync --locked --extra mcp
@@ -14,12 +14,14 @@ scripts/mcp-service.sh status
 
 ```toml
 [mcp]
-host = "127.0.0.1"
+host = "lan"
 port = 8787
 max_pending_tasks = 8
 ```
 
-默认只监听回环地址。跨机接入时，把 `host` 改为 Ubuntu 实际的私有 IPv4。客户端使用相同 IP 和端口连接 `http://<Ubuntu 内网地址>:8787/mcp`，传输选择 Streamable HTTP。服务使用明文 HTTP 和零凭据配置，并校验 Host 及浏览器请求的 Origin。该端口面向单一可信内网，能访问端口的设备都可以提交任务，持有任务 ID 即可查询和取图。
+`lan` 在启动时选择已连接的物理网卡上唯一的 RFC 1918 IPv4。多地址、桥接网卡或 VLAN 环境可直接填写指定的私网 IP，可用 `ip -br -4 addr` 查看。已运行的 MCP 用 `scripts/mcp-service.sh restart` 应用设置。`status` 中的 `host` 是实际绑定的地址，`owned_listener` 和 `healthy` 均应为 `true`。ComfyUI 仍使用本机回环端口 8188。
+
+客户端使用 `http://<Ubuntu 内网地址>:8787/mcp` 通过局域网直连。可从网关所在机器用 `curl --noproxy '*' http://<Ubuntu 内网地址>:8787/healthz` 检查可达性，再按下文提交生图验收。该端口使用明文 HTTP 和零凭据，校验 Host 与浏览器 Origin。能访问端口的设备都可以提交任务，持有任务 ID 即可查询和取图。
 
 ## 工具契约
 
@@ -61,21 +63,21 @@ uv run --locked --extra mcp python examples/mcp_client.py --state-dir "$(mktemp 
 
 ```bash
 uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
-  --url http://192.0.2.10:8787/mcp
+  --url http://192.168.1.20:8787/mcp
 
 uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
-  --url http://192.0.2.10:8787/mcp --generate --edit --size 512x512
+  --url http://192.168.1.20:8787/mcp --generate --edit --size 512x512
 ```
 
 默认只发现工具并查询一个不存在的任务。加 `--generate` 后提交一次合成文生图，再用新连接重放同一 ID、检查冲突、轮询、重复取图并校验 PNG 与 SHA-256。`--edit` 追加一次使用生成图和仓库合成色板的参考图编辑。每个任务的本地图片和回执存于临时目录，脚本退出时自动清理。服务端任务仍按各自的保留规则管理。`--wait-seconds` 调整每个任务的轮询时间。脚本把原请求 ID 打印到 stderr，超时或连接中断时应按原 ID 续查。连接 Comfy MCP 时可用示例客户端的 `--task-id`。
 
 Maus 也可以通过独立的异步生图网关访问本服务。在网关的 `comfy` 后端配置 Bridge 的完整 MCP 地址。网关把原任务 ID、档位、尺寸和参考图传给 Bridge，完成状态和 PNG 由 Bridge 返回。Ubuntu 上的进程、工作流与日志仍由本项目管理。[网关配置与后端契约](https://github.com/hoholidayx/async-image-mcp)
 
-同一验收脚本可验证网关配置的默认后端。以下示例使用本机统一入口，从环境变量读取网关访问令牌。
+也可以通过网关验证 Comfy 的完整路径。以下示例从环境变量读取本机网关令牌，并指定 `comfy`。工具清单中缺少选定后端时，脚本会在提交前报错。
 
 ```bash
-uv run --project ubuntu --locked --extra mcp python ubuntu/examples/verify_image_mcp.py \
-  --url http://127.0.0.1:8790/mcp --token-env ASYNC_IMAGE_MCP_TOKEN --generate
+uv run --project ubuntu --locked --extra mcp --env-file "$HOME/.async-image-mcp/.env" python ubuntu/examples/verify_image_mcp.py \
+  --url http://127.0.0.1:8790/mcp --token-env ASYNC_IMAGE_MCP_TOKEN --backend comfy --generate --size 512x512
 ```
 
 省略尺寸时由服务端选择默认尺寸。经兼容供应商运行 `--generate` 可能产生实际费用。历次结果见[实机验收记录](mcp-rollout.md)。

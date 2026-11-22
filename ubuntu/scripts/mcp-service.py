@@ -14,8 +14,9 @@ import subprocess
 import sys
 import time
 
+from comfy_workflow_api.operations.mcp_listener import mcp_bind_host
+from comfy_workflow_api.operations.process_identity import identity
 from comfy_workflow_api.settings import load_settings, mcp_listen
-from comfy_workflow_api.sleep_guard import identity
 from comfy_workflow_api.storage import now, read_json, write_json
 
 
@@ -137,7 +138,7 @@ class ServiceControl:
         try:
             process = value['process']
             host, port = mcp_listen({'mcp': {'host': value['host'], 'port': value['port']}})
-            valid = (value['phase'] in ('starting', 'running', 'stopped') and
+            valid = (host != 'lan' and value['phase'] in ('starting', 'running', 'stopped') and
                      type(process['pid']) is int and process['pid'] > 1 and
                      type(process['uid']) is int and process['uid'] == os.getuid() and
                      isinstance(process['start_ticks'], str) and process['start_ticks'].isdigit() and
@@ -178,13 +179,13 @@ class ServiceControl:
     def status(self):
         return self.observe(self.saved())
 
-    def start(self):
+    def start(self, host):
         previous = self.status()
-        if previous['state'] == 'running' and (previous['host'], previous['port']) == (self.host, self.port):
+        if previous['state'] == 'running' and (previous['host'], previous['port']) == (host, self.port):
             return previous
         if previous['state'] != 'stopped' or listeners(self.port):
             raise RuntimeError('MCP is already active or its port is occupied; inspect status before starting')
-        command = self.command(self.host, self.port)
+        command = self.command(host, self.port)
         with self.log.open('ab', buffering=0) as log:
             process = subprocess.Popen([NOHUP, *command], cwd=self.root, stdin=subprocess.DEVNULL,
                                        stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -196,7 +197,7 @@ class ServiceControl:
             if saved is None:
                 current = identity(process.pid)
                 if current and current['boot_id'] and current['command'] == command:
-                    saved = {'phase': 'starting', 'host': self.host, 'port': self.port,
+                    saved = {'phase': 'starting', 'host': host, 'port': self.port,
                              'process': current, 'launch_command': [NOHUP, *command],
                              'started_at': now(), 'log': str(self.log)}
                     write_json(self.state_file, saved)
@@ -246,11 +247,17 @@ class ServiceControl:
         if action == 'status':
             return self.status()
         with self.lock():
-            if action in ('stop', 'restart'):
-                stopped = self.stop()
-                if action == 'stop':
-                    return stopped
-            return self.start()
+            if action == 'stop':
+                return self.stop()
+            host = mcp_bind_host(self.host)
+            if action == 'restart':
+                saved = self.saved()
+                if saved and saved['port'] != self.port and listeners(self.port):
+                    raise RuntimeError('Target MCP port is already occupied')
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind((host, 0))
+                self.stop()
+            return self.start(host)
 
 
 def main():

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
+from typing import Literal
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -58,8 +59,9 @@ class AcceptanceEntryTests(unittest.IsolatedAsyncioTestCase):
             return CallToolResult(content=[], structured_content={"error_code": code}, is_error=True)
 
         @server.tool()
-        def image_submit(request_id: str, prompt: str, preset: str, images: list[str] | None = None):
-            request = (prompt, preset, tuple(base64.b64decode(image) for image in (images or [])))
+        def image_submit(request_id: str, prompt: str, preset: str, images: list[str] | None = None,
+                         backend: Literal["comfy", "cloud"] = "cloud"):
+            request = (prompt, preset, tuple(base64.b64decode(image) for image in (images or [])), backend)
             if requests.setdefault(request_id, request) != request:
                 return conflict("request_conflict")
             return CallToolResult(content=[], structured_content={"state": "pending", "task_id": request_id})
@@ -84,12 +86,19 @@ class AcceptanceEntryTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as sandbox:
             with patch.object(verifier, "emit"), patch.object(tempfile, "tempdir", sandbox):
-                await verifier.run(connection, SimpleNamespace(generate=False, edit=False, size=None, preset=None, wait_seconds=5))
+                args = SimpleNamespace(generate=False, edit=False, size=None, preset=None, backend=None, wait_seconds=5)
+                await verifier.run(connection, args)
+                args.generate = True
+                args.backend = "missing"
+                with self.assertRaisesRegex(RuntimeError, "does not advertise"):
+                    await verifier.run(connection, args)
                 self.assertEqual(requests, {})
-                await verifier.run(connection, SimpleNamespace(generate=True, edit=True, size=None, preset="fast", wait_seconds=5))
+                args.backend, args.edit, args.preset = "comfy", True, "fast"
+                await verifier.run(connection, args)
             self.assertEqual(list(Path(sandbox).iterdir()), [])
 
-        self.assertEqual(len(sessions), 8)
+        self.assertEqual(len(sessions), 9)
         self.assertEqual(len(requests), 2)
         self.assertTrue(all(request[1] == "fast" for request in requests.values()))
+        self.assertTrue(all(request[3] == "comfy" for request in requests.values()))
         self.assertEqual([request[2] for request in requests.values()], [(), (png, palette)])

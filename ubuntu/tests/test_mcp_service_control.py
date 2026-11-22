@@ -70,9 +70,11 @@ class ServiceControlTests(unittest.TestCase):
             self.assertFalse(service.healthy('192.168.20.4', 8787, 4321))
 
     def test_start_is_detached_and_records_exact_command_after_health(self):
+        self.control.host = 'lan'
         launcher = Mock(pid=1234)
         launcher.poll.return_value = None
-        with patch.object(service, 'listeners', return_value=[]), \
+        with patch.object(service, 'mcp_bind_host', return_value=self.saved['host']), \
+             patch.object(service, 'listeners', return_value=[]), \
              patch.object(service.subprocess, 'Popen', return_value=launcher) as spawn, \
              patch.object(service, 'identity', return_value=self.process), \
              patch.object(self.control, 'status', return_value={'state': 'stopped'}), \
@@ -86,7 +88,33 @@ class ServiceControlTests(unittest.TestCase):
         saved = self.control.saved()
         self.assertEqual(saved['process'], self.process)
         self.assertEqual(saved['phase'], 'running')
+        self.assertEqual(saved['host'], self.saved['host'])
         self.assertEqual(saved['log'], str(self.control.log))
+
+    def test_restart_resolves_lan_before_stopping_and_status_uses_saved_address(self):
+        self.control.host = 'lan'
+        service.write_json(self.control.state_file, self.saved)
+        with patch.object(service, 'mcp_bind_host', side_effect=ValueError('LAN unavailable')), \
+             patch.object(self.control, 'stop') as stop, patch.object(service, 'process_identity', return_value=None), \
+             patch.object(service, 'listeners', return_value=[]):
+            self.assertEqual(self.control.run('status')['host'], self.saved['host'])
+            with self.assertRaisesRegex(ValueError, 'LAN unavailable'):
+                self.control.run('restart')
+            stop.assert_not_called()
+            self.control.run('stop')
+            stop.assert_called_once()
+
+    def test_unassigned_address_or_busy_new_port_leaves_current_listener_running(self):
+        service.write_json(self.control.state_file, self.saved)
+        with patch.object(self.control, 'stop') as stop, patch.object(service.socket, 'socket') as probe, \
+             patch.object(service, 'listeners', return_value=[self.listener]):
+            probe.return_value.__enter__.return_value.bind.side_effect = OSError('Address unavailable')
+            with self.assertRaisesRegex(OSError, 'Address unavailable'):
+                self.control.run('restart')
+            self.control.port += 1
+            with self.assertRaisesRegex(RuntimeError, 'port is already occupied'):
+                self.control.run('restart')
+            stop.assert_not_called()
 
     def test_live_status_requires_matching_process_socket_and_hangup_disposition(self):
         service.write_json(self.control.state_file, self.saved)

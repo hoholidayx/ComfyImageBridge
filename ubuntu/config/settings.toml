@@ -5,8 +5,8 @@ poll_interval = 1
 wait_timeout = 1200
 
 [mcp]
-# Set an explicit trusted LAN IPv4 address to allow remote clients.
-host = "127.0.0.1"
+# Use the single private IPv4 on an active hardware interface, or set an explicit address.
+host = "lan"
 port = 8787
 max_pending_tasks = 8
 

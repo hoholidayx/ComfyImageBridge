@@ -18,7 +18,7 @@
 | `retention.max_tasks` | 100；清理模块管理的旧任务及其专用产物 |
 | `retention.comfy_input_dir` / `comfy_output_dir` | 默认从 ComfyUI 根目录推导 `input/comfy-workflow-api`、`output/comfy-workflow-api` |
 | `sleep_guard` | 默认自动检测主机定时休眠，空闲宽限期 10 秒。设为 `false` 可跳过检测和自动持锁。[策略判定](../ubuntu/README.md#按主机策略防睡眠) |
-| `mcp.host` / `mcp.port` | 默认 `127.0.0.1:8787`。跨机访问时显式填写 Ubuntu 的可信内网 IPv4，见 [MCP 部署](mcp.md) |
+| `mcp.host` / `mcp.port` | 随包配置为 `lan:8787`，启动时选择已连接物理网卡上唯一的 RFC 1918 地址。也可显式指定私网或回环 IPv4。旧配置缺少 `host` 时沿用回环地址。[MCP 部署](mcp.md) |
 
 配置文件本身不含密钥。实际主机的配置应单独备份，升级时人工合并新增键，避免覆盖。`COMFY_WORKFLOW_HOME` 可指定模块根目录；脚本与 SDK 必须指向同一根目录，以免使用不同数据和状态文件。
 

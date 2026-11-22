@@ -1,5 +1,13 @@
 # Ubuntu MCP 上线与实机验收
 
+## 0.9.3 · 局域网直连待部署
+
+仓库和 Mac 隔离实例已验证私网 IPv4 监听、Host 校验、网关显式选择 `comfy` 以及同一任务重复取图。隔离实例使用模拟 ComfyUI。Ubuntu 升级、跨机直连与 Qwen GPU 出图留待主机恢复后执行。
+
+1. 在 Ubuntu 用 `ip -br -4 addr` 确认有线网卡地址，记录当前两个服务的状态和活动队列。队列空闲后备份现有配置，按[升级说明](configuration.md)更新部署目录，保留工作流、私有配置和任务数据。
+2. 在实际的 `config/settings.toml` 设置 `[mcp]` 的 `host`。单物理网卡可用 `"lan"`，多地址主机填选定的具体私网 IPv4。在 Ubuntu 部署目录执行 `uv sync --locked --extra mcp`、`scripts/comfyui-service.sh ensure_ready` 和 `scripts/mcp-service.sh restart`。核对状态里的实际监听地址、进程归属和健康检查。
+3. 在 Mac 的私有网关配置中将 `connections.comfy.base_url` 指向该地址的 `/mcp`，应用配置。先从 Mac 直接访问 Bridge，再经网关显式选择 `comfy` 生成 512×512 图片。记录任务号、尺寸、摘要、耗时和 ComfyUI 的实际 uni 采样记录。[验收命令](mcp.md#独立验收)
+
 ## 2026-11-22 · 0.9.2 自动防睡眠验收
 
 - 使用隔离的任务库、真实 uni 编译器与模拟 ComfyUI 验证文生图和参考图编辑。休眠关闭、会话或电源总线不可访问时，任务正常提交并取回 PNG。确认定时休眠但授锁被拒时，上传数和 GPU 提交数均为零。桌面在授锁时退出的用例提交一次。

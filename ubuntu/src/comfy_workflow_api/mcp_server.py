@@ -31,6 +31,7 @@ from .version import VERSION
 from .image_jobs import (
     ImageJobs, ImageJobError, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE, MAX_IMAGE_TOTAL_BYTES, MAX_IMAGES,
 )
+from .operations.mcp_listener import mcp_bind_host
 from .settings import load_settings, mcp_listen, module_root
 
 
@@ -227,7 +228,7 @@ def create_managed_app(root, base_url, *, host, port):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, help='Ubuntu deployment checkout with config and workflow snapshots')
-    parser.add_argument('--host', help='Override the configured explicit IPv4 address')
+    parser.add_argument('--host', help='Listen on lan or an explicit private or loopback IPv4 address')
     parser.add_argument('--port', type=int, help='Override the configured port')
     args = parser.parse_args(argv)
     root = module_root(args.root)
@@ -245,6 +246,7 @@ def main(argv=None):
             overrides = {name: value for name, value in (('host', args.host), ('port', args.port)) if value is not None}
             config = {**config, **overrides}
         host, port = mcp_listen({'mcp': config})
+        host = mcp_bind_host(host)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.error(str(exc))
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
