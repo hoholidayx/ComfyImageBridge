@@ -2,6 +2,8 @@
 
 本页记录 0.8 以前版本当时的部署和插件验收。当前版本按[开发与升级](development.md)验证，MCP 实机结果见[部署记录](mcp-rollout.md)。
 
+下文“显式非冲突 seed 保留”等描述仅对应当时版本。当前 UNI edit 在 SDK、CLI 和 MCP 公共入口强制随机 seed，现行契约见 [MCP 接入](mcp.md#工具契约)及 [Ubuntu SDK](../ubuntu/README.md)。
+
 ## 生图插件 0.6.5 编辑 seed 保护
 
 本版验收范围：

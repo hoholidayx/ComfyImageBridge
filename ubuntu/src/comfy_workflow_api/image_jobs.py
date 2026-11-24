@@ -7,7 +7,6 @@ import json
 import logging
 from pathlib import Path
 import re
-import secrets
 import sqlite3
 import tempfile
 import time
@@ -249,27 +248,20 @@ class ImageJobs:
             raise ImageJobError('result_not_ready', 'Image result is unavailable for this task state')
         return json.loads(row['result']), row['png']
 
-    def _chosen_seed(self, db, request):
-        seed = int(request['seed']) if request['seed'] is not None else None
-        if not request['image_hashes']:
-            return seed if seed is not None else 0
+    def _seed_exclusions(self, db, request):
         forbidden = set()
         for sha256 in request['image_hashes']:
             forbidden.update(int(row[0]) for row in db.execute(
                 'SELECT seed FROM image_seeds WHERE sha256=?', (sha256,)))
-        if seed is not None and seed not in forbidden:
-            return seed
-        while True:
-            seed = secrets.randbits(64)
-            if seed not in forbidden:
-                return seed
+        return forbidden
 
     def _before_prompt(self, task_id, backend_id, prompt_id):
         # The saved SDK output must survive cleanup even if the process dies
         # after fetching it and before committing the MCP result transaction.
         self.api.pin_result(backend_id, True)
+        seed = read_json(self.api.data/'runs'/backend_id/'effective-request.json')['seed']
         with self._db() as db:
-            db.execute('UPDATE jobs SET prompt_id=? WHERE task_id=?', (prompt_id, task_id))
+            db.execute('UPDATE jobs SET prompt_id=?, chosen_seed=? WHERE task_id=?', (prompt_id, str(seed), task_id))
 
     def _release_pin(self, backend_id, error_code=None):
         if backend_id is not None:
@@ -283,9 +275,10 @@ class ImageJobs:
         request = json.loads(job['request'])
         backend_id = str(uuid.uuid4())
         with self._db() as db:
-            seed = int(job['chosen_seed']) if job['chosen_seed'] is not None else self._chosen_seed(db, request)
+            seed = int(request['seed']) if request['seed'] is not None else 0
+            excluded = self._seed_exclusions(db, request) if request['image_hashes'] else ()
             db.execute("UPDATE jobs SET state='submitting', backend_id=?, chosen_seed=? WHERE task_id=?",
-                       (backend_id, str(seed), task_id))
+                       (backend_id, None if request['image_hashes'] else str(seed), task_id))
         workflow = request['workflow']
         effective = {key: request[key] for key in ('prompt', 'preset', 'output_size')}
         effective['seed'] = seed
@@ -302,6 +295,7 @@ class ImageJobs:
                     if len(effective['images']) != len(request['image_hashes']):
                         raise ValueError('Saved references are incomplete')
                 self.api.submit(workflow, effective, task_id=backend_id, readiness=self._admission_ready,
+                                _edit_seed_exclusions=excluded,
                                 before_prompt=lambda prompt_id: self._before_prompt(task_id, backend_id, prompt_id))
         except BackendUnavailable:
             self._finish(task_id, 'failed', 'backend_unavailable')

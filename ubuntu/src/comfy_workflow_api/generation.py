@@ -14,7 +14,7 @@ from .backend import BackendContext, GenerationRuntime, OutputUnavailable
 from .compiler import compile_graph, digest
 from .storage import cleanup_lock, now, read_json, write_json
 from .retention import cleanup_after_fetch, result_pin
-from .contract import normalize
+from .seed_policy import prepare_request, seed_policy
 from .metadata import backend_metadata
 from .sampling import configuration as sampling_configuration
 from . import snapshots
@@ -52,9 +52,10 @@ class WorkflowRuns(BackendContext):
 
     def compile(self, workflow, request, request_dir=None):
         snapshot, manifest = self._snapshot(workflow)
-        request = self._request(request, request_dir)
+        request = prepare_request(self._request(request, request_dir), workflow)
         return {"workflow": workflow, "snapshot": manifest, "submitted": False,
-                "prompt": compile_graph(workflow, snapshot, request)}
+                "prompt": compile_graph(workflow, snapshot, request),
+                "request_used": request, "seed_used": request['seed'], 'seed_policy': seed_policy(workflow)}
 
     def _directory(self, task_id):
         if str(uuid.UUID(task_id)) != task_id:
@@ -67,10 +68,12 @@ class WorkflowRuns(BackendContext):
         with (directory / "task.log").open("a") as stream:
             stream.write(json.dumps({"time": now(), "state": state["state"], "message": message}, ensure_ascii=False) + "\n")
 
-    def submit(self, workflow, request, request_dir=None, *, task_id=None, readiness=None, before_prompt=None):
+    def submit(self, workflow, request, request_dir=None, *, task_id=None, readiness=None, before_prompt=None,
+               _edit_seed_exclusions=()):
         snapshot, manifest = self._snapshot(workflow)
         original_request = copy.deepcopy(request)
-        request = normalize(self._request(request, request_dir), workflow)
+        request = prepare_request(self._request(request, request_dir), workflow,
+                                  exclude_seeds=_edit_seed_exclusions)
         request.setdefault('output_size', {'mode': 'follow_image'} if workflow.endswith('edit') else {'mode': 'explicit', 'width': 1024, 'height': 1024})
         if workflow.endswith('edit'):
             request.setdefault('reference_resolution', 1024)
@@ -90,7 +93,8 @@ class WorkflowRuns(BackendContext):
         state = {"task_id": task_id, "workflow": workflow, "snapshot": manifest,
                  "state": "preparing", "created_at": now(), "prompt_id": None,
                  "service_instance_id": service_instance_id, "last_progress_at": now(),
-                 "base_url": self.client.base_url, 'request_used': request, 'seed_used': request['seed'], 'metadata': backend_metadata()}
+                 "base_url": self.client.base_url, 'request_used': request, 'seed_used': request['seed'],
+                 'seed_policy': seed_policy(workflow), 'metadata': backend_metadata()}
         write_json(directory / 'original-request.json', original_request)
         write_json(directory / "request.json", request)
         write_json(directory / "source-workflow.json", snapshot)
@@ -341,6 +345,7 @@ class WorkflowRuns(BackendContext):
                         if graph['458']['class_type'] == 'SamplerCustom' else {key: inputs[key] for key in ('seed', 'steps', 'cfg')})
             effective = {**read_json(directory/'request.json'), **sampling}
         result.update(request_used=effective, seed_used=effective['seed'], metadata=backend_metadata(), model_config=state.get('model_config'))
+        result['seed_policy'] = state.get('seed_policy', 'fixed')
         result['sampling_config'] = state.get('sampling_config')
         for output in outputs:
             output['seed_used'] = effective['seed']

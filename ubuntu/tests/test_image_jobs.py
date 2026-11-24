@@ -231,7 +231,7 @@ class ImageJobsTest(unittest.TestCase):
         self.jobs.tick()
         self.assertEqual(self.jobs.result(t2i)[0]['seed_used'], str(2**64 - 1))
         self.submit(images=(PALETTE, ROBOT), seed=str(2**64 - 1))
-        with patch('comfy_workflow_api.image_jobs.secrets.randbits', return_value=123):
+        with patch('comfy_workflow_api.seed_policy.secrets.randbits', return_value=123):
             self.jobs.tick()
         self.assertEqual(self.client.uploads, [PALETTE, ROBOT])
         graph = self.client.posts[-1]['prompt']

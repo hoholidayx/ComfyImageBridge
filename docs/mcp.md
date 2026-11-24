@@ -35,7 +35,7 @@ max_pending_tasks = 8
 - `prompt` 最多 8000 字符。默认使用 uni 工作流的 `quality` 档，文生图和编辑均为 40 步、无加速 LoRA、Euler/simple。显式指定 `fast` 后，同一原生 KSampler 使用 Euler/simple 运行 6 步，并启用加速 LoRA。CFG 固定为 1。
 - `size=auto` 时，文生图使用 1024×1024，编辑跟随第一张参考图经工作流处理后的尺寸。也支持 `宽x高`，每边为 64 至 2048 且为 32 的倍数，以及比例 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`21:9`。
 - 省略 `images` 或传空数组即文生图。编辑接收 1 至 10 张按顺序排列的 PNG base64 字符串。每张最多 20 MiB、每边最多 8192 像素、面积最多 3200 万像素。解码后合计最多 32 MiB，HTTP 请求体上限 48 MiB。参考图由框架发送原始字节。第一张是编辑底图，其余可在提示词中按 `<image2>` 等标记引用。
-- `seed` 和 `seed_used` 使用无符号 64 位整数的十进制字符串。文生图默认 `0`。编辑默认随机，显式 seed 与任一参考图的已知生成 seed 冲突时会自动换值。保留原始 PNG 字节可以命中 SHA-256 来源索引。
+- `seed` 和 `seed_used` 使用无符号 64 位整数的十进制字符串。文生图保留显式 seed，省略时默认 `0`。每个新 UNI 编辑由公共运行时强制选择随机 seed；合法显式 seed 仍会校验，但不会用于执行。MCP 继续通过 SHA-256 来源索引排除参考图的已知生成 seed。原请求 ID 的重放、状态和结果查询不会重抽 seed，`seed_used` 始终是实际执行值。
 
 任务状态为 `pending`、`submitting`、`queued`、`running`、`completed`、`failed`、`submission_uncertain` 或 `expired`。`completed` 时取图。提交应答丢失或已提交任务的后端状态无法查证时，进入 `submission_uncertain`，框架使用原任务 ID 续查。服务在 `wait_timeout` 窗口内自动查证，超时后保留待诊断状态并释放队列名额，框架可停止轮询。工具业务错误以 MCP 错误结果返回，调用方可区分 `invalid_request`、`request_conflict`、`backend_unavailable`、`queue_full`、`task_not_found`、`result_not_ready` 和 `result_expired`。已结束任务按 `retention.max_tasks` 保留，过期任务的请求 ID 仍用于防止重提。
 

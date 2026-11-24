@@ -49,7 +49,7 @@ class _SubmitArguments(_Arguments):
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
     preset: Literal['fast', 'quality'] = DEFAULT_PRESET
     size: str = Field(default='auto', max_length=16, description='auto, WxH or a supported aspect ratio.')
-    seed: str | None = Field(default=None, pattern=r'^[0-9]{1,20}$', description='Optional uint64 decimal text.')
+    seed: str | None = Field(default=None, pattern=r'^[0-9]{1,20}$', description='Optional uint64 decimal text. Fixed for text-to-image; edit always selects a fresh random seed.')
     images: list[str] = Field(default_factory=list, max_length=MAX_IMAGES, description='Ordered base64 PNGs supplied by the host.')
 
 

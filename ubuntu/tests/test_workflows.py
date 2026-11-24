@@ -3,6 +3,7 @@ import json
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from comfy_workflow_api import WorkflowAPI, APIError
 from comfy_workflow_api.compiler import compile_graph, topology
@@ -111,13 +112,14 @@ class WorkflowsTest(unittest.TestCase):
             for mode in modes + ([{'mode': 'follow_image'}] if alias.endswith('edit') else []):
                 with self.subTest(alias=alias, mode=mode):
                     request = {**self.request(example), 'seed': 42, 'output_size': mode}
-                    fast, quality = [self.api.compile(alias, {**request, 'preset': preset}, ROOT/'examples')['prompt']
-                                     for preset in ('fast', 'quality')]
+                    with patch('comfy_workflow_api.seed_policy.secrets.randbits', return_value=99):
+                        fast, quality = [self.api.compile(alias, {**request, 'preset': preset}, ROOT/'examples')['prompt']
+                                         for preset in ('fast', 'quality')]
                     for graph, steps, use_lora in [(fast, 6, True), (quality, 40, False)]:
                         self.assertEqual(graph['458']['class_type'], 'KSampler')
                         inputs = graph['458']['inputs']
                         self.assertEqual((inputs['seed'], inputs['cfg'], inputs['sampler_name'], inputs['scheduler'],
-                                          inputs['denoise']), (42, 1, 'euler', 'simple', 1))
+                                          inputs['denoise']), (99 if alias.endswith('edit') else 42, 1, 'euler', 'simple', 1))
                         self.assertEqual(inputs.pop('steps'), steps)
                         self.assertIs(graph['485']['inputs'].pop('switch'), use_lora)
                     self.assertEqual(fast, quality)
@@ -170,7 +172,8 @@ class WorkflowsTest(unittest.TestCase):
 
     def test_quality_edit_batch_preserves_40_in_children_and_receipts(self):
         request={**self.request('edit-single.json'),'preset':'quality','seed':0}
-        batch=self.api.submit_batch('qwen-image-2.1-edit',request,count=2,request_dir=ROOT/'examples')
+        with patch('comfy_workflow_api.seed_policy.secrets.randbits', side_effect=[500, 501, 502]):
+            batch=self.api.submit_batch('qwen-image-2.1-edit',request,count=2,request_dir=ROOT/'examples')
         self.assertEqual(batch['request_used']['steps'],40)
         for index, child in enumerate(batch['children']):
             directory=self.api._directory(child['task_id'])
@@ -178,7 +181,8 @@ class WorkflowsTest(unittest.TestCase):
             effective=read_json(directory/'effective-request.json')
             graph=read_json(directory/'prompt.json')
             self.assertEqual(state['request_used']['steps'],40)
-            self.assertEqual((effective['steps'],effective['seed'],effective['use_lora']),(40,index,False))
+            self.assertEqual((effective['steps'],effective['seed'],effective['use_lora']),(40,501+index,False))
+            self.assertEqual(child['seed_used'],effective['seed'])
             self.assertEqual(graph['458']['inputs']['steps'],40)
             self.assertFalse(graph['485']['inputs']['switch'])
 

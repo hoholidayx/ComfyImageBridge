@@ -11,7 +11,7 @@
 | 谁负责 | 代码 | 职责 |
 | --- | --- | --- |
 | MCP 服务 | `mcp_server.py` | 校验协议输入、转换结果、组装后台 worker 和定时清理 |
-| 生图任务 | `image_jobs.py`、`generation.py` | 请求去重、持久化队列、编译、单次提交、进度核对和 PNG 回收 |
+| 生图任务 | `image_jobs.py`、`generation.py`、`seed_policy.py` | 请求去重、持久化队列、编辑 seed 分配、编译、单次提交、进度核对和 PNG 回收 |
 | 共享工作流 | `snapshots.py`、`compiler.py`、`client.py` | 校验 uni 快照、生成执行图、访问 ComfyUI HTTP 接口，供用户任务和运维烟测共同使用 |
 | 运行时适配 | `backend.py` 的 `GenerationRuntime`、`operations/runtime.py` | 为任务提供就绪判断、提交保护、取图保护和实例退役证据 |
 | Ubuntu 运维 | `scripts/comfyui-service.py`、`operations/`、`sleep_guard.py`、`sleep_cycle.py` | 管理进程、执行诊断出图、核验实例归属、协调睡眠、轮转日志和清理退役记录 |
@@ -36,4 +36,4 @@ Ubuntu 的 `operations/sleep_policy.py` 负责识别当前定时休眠，`operat
 
 MCP 用 SQLite 持久化请求 ID、请求指纹、任务状态及已验证的 PNG。执行图和工作流回执由 SDK 保存在 Ubuntu 的任务目录。提交超时后沿用原 ID 查询。取图完成前，MCP 固定对应 SDK 结果以便异常退出后恢复。MCP 完成事务后才释放固定标记。
 
-编辑按参考图 SHA-256 查询已知生成 seed，避免复用来源 seed。图片过期后保留轻量来源和请求指纹。保留范围和日志轮转见 [Ubuntu 运维说明](../ubuntu/README.md#产物防睡眠与清理)。
+每个新 UNI edit 在公共预览或提交准备时只分配一次随机 seed，覆盖合法的调用者固定值；底层图编译保持确定性，状态、历史和结果查询不重新分配。预览不为后续提交预留 seed，文生图固定 seed 不变。MCP 另按参考图 SHA-256 查询已知生成 seed 作为排除项，提交前把实际值写入日志。批次按子任务记录实际 seed，编辑批次不存在单个父 seed。图片过期后保留轻量来源和请求指纹。保留范围和日志轮转见 [Ubuntu 运维说明](../ubuntu/README.md#产物防睡眠与清理)。

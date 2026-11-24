@@ -3,6 +3,7 @@ import copy
 import re
 import uuid
 from .contract import normalize
+from .seed_policy import seed_policy
 from .metadata import backend_metadata
 from .storage import now, read_json, write_json
 
@@ -20,7 +21,8 @@ def submit(api, alias, request, count=1):
     effective.setdefault('output_size', {'mode': 'follow_image'} if alias.endswith('edit') else {'mode': 'explicit', 'width': 1024, 'height': 1024})
     if alias.endswith('edit'):
         effective.setdefault('reference_resolution', 1024)
-    if effective['seed'] + count - 1 >= 2**64:
+    edit = seed_policy(alias) == 'random_per_edit'
+    if not edit and effective['seed'] + count - 1 >= 2**64:
         raise ValueError('seed + count - 1 exceeds unsigned 64-bit range')
     api.compile(alias, effective)  # reject the complete request before any job is submitted
     task_id = str(uuid.uuid4())
@@ -28,17 +30,18 @@ def submit(api, alias, request, count=1):
     folder.mkdir(parents=True)
     batch = {'task_id': task_id, 'workflow': alias, 'state': 'submitting', 'count': count,
              'created_at': now(), 'children': [], 'request_used': effective,
-             'seed_used': effective['seed'], 'metadata': backend_metadata()}
+             'seed_used': None if edit else effective['seed'], 'seed_policy': seed_policy(alias),
+             'metadata': backend_metadata()}
     write_json(folder/'batch.json', batch, create_parent=False)
     for index in range(count):
-        child_request = {**copy.deepcopy(effective), 'seed': effective['seed'] + index}
+        child_request = {**copy.deepcopy(effective), 'seed': effective['seed'] if edit else effective['seed'] + index}
         try:
             child = api.submit(alias, child_request)
-            batch['children'].append({'task_id': child['task_id'], 'seed_used': child_request['seed'], 'state': child['state']})
+            batch['children'].append({'task_id': child['task_id'], 'seed_used': child['seed_used'], 'state': child['state']})
         except Exception as exc:
             match = re.search(r'Task ([0-9a-f-]{36}):', str(exc))
             if match:
-                batch['children'].append({'task_id': match.group(1), 'seed_used': child_request['seed'], 'state': 'submission_uncertain'})
+                batch['children'].append({'task_id': match.group(1), 'seed_used': None if edit else child_request['seed'], 'state': 'submission_uncertain'})
             batch['submission_error'] = str(exc)
             batch['submission_stopped'] = True
             write_json(folder/'batch.json', batch, create_parent=False)
@@ -57,6 +60,8 @@ def status(api, task_id):
         try:
             state = api.status(child['task_id'])
             child.update({key: state.get(key) for key in ('state', 'elapsed_seconds', 'queued_seconds', 'running_seconds', 'last_progress_at', 'stalled', 'stall_reason', 'observed_at', 'cancel_requested_at', 'cancellation_confirmed') if key in state})
+            if 'seed_used' in state:
+                child['seed_used'] = state['seed_used']
             child.update(snapshot=state.get('snapshot'), model_config=state.get('model_config'), sampling_config=state.get('sampling_config'))
             if state.get('error'):
                 child['error'] = state['error']

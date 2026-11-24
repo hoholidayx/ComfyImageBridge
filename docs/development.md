@@ -24,13 +24,15 @@ uv run --project ubuntu --locked --extra mcp python ubuntu/scripts/check.py
 | --- | --- |
 | MCP 工具协议与生产服务组装 | `ubuntu/src/comfy_workflow_api/mcp_server.py` |
 | 任务队列、去重、seed 来源与结果保留 | `image_jobs.py`、`retention.py` |
-| SDK 公开入口、执行流程与编译 | `api.py`、`generation.py`、`compiler.py` |
+| SDK 公开入口、执行流程与编译 | `api.py`、`generation.py`、`seed_policy.py`、`compiler.py` |
 | 运行时接口与 Ubuntu 实现 | `backend.py`、`operations/runtime.py` |
 | 只读就绪检查与真实烟测 | `operations/service_readiness.py`、`operations/render_probe.py` |
 | 服务启停、睡眠恢复和定时清理 | `ubuntu/scripts/comfyui-service.py`、`ubuntu/scripts/mcp-service.sh`、`sleep_cycle.py`、`operations/maintenance.py` |
 | 快照读取与允许拓扑 | `snapshots.py`、`ubuntu/workflows/` |
 
 表中 Python 模块的相对路径从 `ubuntu/src/comfy_workflow_api/` 起算。修改模块边界后，运行上面的离线检查。`ubuntu/tests/test_generation_boundaries.py` 验证两侧可以独立加载，并使用替代运行时覆盖文生图和参考图编辑。依赖方向和提交时序见[架构说明](architecture.md#生图与-ubuntu-运维的边界)。
+
+`ubuntu/tests/test_edit_seed_policy.py` 从 SDK、CLI 和 MCP 任务入口捕获替身 `/prompt`，核对固定输入 seed 的两次编辑使用不同实际节点值、回执一致、重放不重抽，以及文生图固定 seed 不变。`compile` 的编辑预览独立随机，不作为后续提交的 seed 预约；低层 `compile_graph` 不负责随机化。
 
 ## 发布步骤
 

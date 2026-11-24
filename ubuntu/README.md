@@ -62,9 +62,11 @@ uv run comfy-workflow sync-workflows
 
 两个入口使用同一份 uni 文件，档位只改变步数和加速 LoRA 开关。回执的 `sampling_config` 记录实际提交的采样配置。CFG 固定为 1、负向提示词必须为空，其他组合因既有实测不稳定而拒绝。步数由 preset 固定，不能任意指定。
 
-`prompt` 必填，最多 8000 字符，超限报错；直接使用本 SDK/CLI 时 `seed` 默认固定 0，不随机，范围为无符号 64 位整数。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
+`prompt` 必填，最多 8000 字符，超限报错；`seed` 的输入范围为无符号 64 位整数。UNI 文生图保留调用者指定 seed，省略时固定为 0。UNI edit / image-to-image 在 SDK、CLI 和 MCP 的公共提交入口统一强制选取随机 64 位 seed，即使调用者传入固定 seed 也会替换；合法输入仍会校验。多图编辑按数组顺序连接 `<image1>`、`<image2>` 等入口。
 
-**Qwen Image 2.1 编辑重要约束：生成图再次作为参考图 edit 时，应避免复用参考图生成时的 seed。** 当前模型配置的合成图交叉对照已复现同源 seed 的纹理劣化。MCP 使用 Ubuntu 端的 SHA-256 来源索引自动避开已知冲突。直接调用 SDK / CLI 或手动使用 ComfyUI 时，请自行选择新 seed。文生图默认 seed 为 0。
+**UNI edit 的 seed 在每个新任务准备时只选取一次。** 实际执行图、`seed_used`、`request_used`、采样记录及输出回执保持一致；原始请求另存用于审计。编译验证、上传、状态查询、取历史和不确定提交的对账不会再次随机，也不会重新提交。MCP 继续通过 SHA-256 来源索引排除参考图的已知 seed；所有 edit 都排除此次调用者传入的 seed。随机值不承诺跨进程、跨任务的全局唯一性。
+
+`compile` 是不提交的预览：每次 edit 预览也会选取并返回实际预览用的 `seed_used`、`request_used` 和 `seed_policy`，但不为后续 submit 预留该值；后续新任务仍会重新选择。底层 `compile_graph` 对已准备请求保持确定性，内部多次编译不会改变一次提交的 seed。此策略只覆盖 Bridge 管理的入口，不修改手动 ComfyUI UI 或绕过 Bridge 的直接 `/prompt` 调用。
 
 尺寸用 `output_size` 表达：
 
@@ -120,7 +122,8 @@ task = api.submit("qwen-image-2.1-t2i", {
 })
 api.wait(task["task_id"], timeout=1200)
 result = api.fetch(task["task_id"])
-# 可选：batches.submit(api, alias, request, count=2)，count 为 1..4，seed 递增。
+# 可选：batches.submit(api, alias, request, count=2)，count 为 1..4。
+# 文生图 seed 递增；edit 每个子任务独立随机，父批次 seed_used 为 null，子项记录实际值。
 ```
 
 SDK 提供 `health`、`list_workflows`、`compile`、`submit`、`status`、`wait`、`fetch`、`run`、`cancel` 和 `cleanup`。批次逐项排队，不增大 GPU latent batch。
